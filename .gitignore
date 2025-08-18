@@ -1,0 +1,9 @@
+/training
+/.venv
+.vscode/
+.idea/
+/input_videos
+/output_videos
+/runs
+/stubs
+yolov8x.pt
