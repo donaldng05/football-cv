@@ -10,7 +10,9 @@ from utils import measure_distance, measure_xy_distance
 
 class CameraMovementEstimator:
     def __init__(self, frame):
-
+        """
+        Initialize the CameraMovementEstimator with feature tracking parameters.
+        """
         self.minimum_distance = 5
 
         self.lk_params = dict(
@@ -33,6 +35,9 @@ class CameraMovementEstimator:
         )
 
     def add_adjust_positions_to_tracks(self, tracks, camera_movement_per_frame):
+        """
+        Adjust object positions in tracks to compensate for camera movement.
+        """
         for object, object_tracks in tracks.items():
             for frame_num, track in enumerate(object_tracks):
                 for track_id, track_info in track.items():
@@ -47,6 +52,9 @@ class CameraMovementEstimator:
                     ] = position_adjusted
 
     def get_camera_movement(self, frames, read_from_stub=False, stub_path=None):
+        """
+        Calculate or load camera movement per frame using Optical Flow.
+        """
         # read the stub
         if read_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path, "rb") as f:
@@ -89,6 +97,9 @@ class CameraMovementEstimator:
         return camera_movement
 
     def draw_camera_movement(self, frames, camera_movement_per_frame):
+        """
+        Visualize camera movement statistics on the video frames.
+        """
         output_frames = []
         for frame_num, frame in enumerate(frames):
             frame = frame.copy()

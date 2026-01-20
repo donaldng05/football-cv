@@ -7,11 +7,18 @@ from utils import measure_distance, get_foot_position
 
 
 class SpeedAndDistanceEstimator:
+    """
+    Estimates the speed and total distance covered by tracked objects.
+    """
+
     def __init__(self):
         self.frame_window = 5
         self.frame_rate = 25
 
     def add_speed_and_distance_to_tracks(self, tracks):
+        """
+        Calculate speed (km/h) and total distance (m) for each tracked object.
+        """
         total_distance = {}
 
         for object, object_tracks in tracks.items():
@@ -59,6 +66,9 @@ class SpeedAndDistanceEstimator:
                         ] = total_distance[object][track_id]
 
     def draw_speed_and_distance(self, frames, tracks):
+        """
+        Annotate video frames with speed and distance metrics for players.
+        """
         output_frames = []
         for frame_num, frame in enumerate(frames):
             for object, object_tracks in tracks.items():

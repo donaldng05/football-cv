@@ -3,6 +3,10 @@ import cv2
 
 
 class ViewTransformer:
+    """
+    Handles perspective transformation to map pixel coordinates from the video to real-world coordinates (meters).
+    """
+
     def __init__(self):
         count_width = 68
         court_length = 23.32
@@ -33,6 +37,9 @@ class ViewTransformer:
         )
 
     def transform_point(self, point):
+        """
+        Transform a single 2D point from pixel coordinates to real-world coordinates.
+        """
         p = int(point[0]), int(point[1])
         is_inside = cv2.pointPolygonTest(self.pixel_verticies, p, False) >= 0
         if not is_inside:
@@ -45,6 +52,10 @@ class ViewTransformer:
         return transformed_point.reshape(-1, 2)
 
     def add_transformed_position_to_tracks(self, tracks):
+        """
+        Apply perspective transformation to all tracked object positions.
+        Updates the tracks dictionary in-place by adding 'position_transformed' to each track entry.
+        """
         for object, object_tracks in tracks.items():
             for frame_num, track in enumerate(object_tracks):
                 for track_id, track_info in track.items():

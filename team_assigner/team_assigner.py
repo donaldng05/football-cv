@@ -2,11 +2,18 @@ from sklearn.cluster import KMeans
 
 
 class TeamAssigner:
+    """
+    Assigns players to teams based on the color of their jerseys using K-Means clustering.
+    """
+
     def __init__(self):
         self.team_colors = {}
         self.player_team_dict = {}
 
     def get_clustering_model(self, image):
+        """
+        Create and fit a K-Means clustering model for the given image.
+        """
         # reshape image to 2d array
         reshaped_image = image.reshape((-1, 3))
         # performs K-means with 2 clusters
@@ -15,6 +22,9 @@ class TeamAssigner:
         return kmeans
 
     def get_player_color(self, frame, bbox):
+        """
+        Extract the dominant color of a player's jersey.
+        """
         image = frame[int(bbox[1]) : int(bbox[3]), int(bbox[0]) : int(bbox[2])]
 
         top_half_image = image[0 : int(image.shape[0] // 2), :]
@@ -40,6 +50,9 @@ class TeamAssigner:
         return player_color
 
     def assign_team_color(self, frame, player_detections):
+        """
+        Determine the representative colors for the two teams based on initial player detections.
+        """
         player_colors = []
         for _, player_detections in player_detections.items():
             bbox = player_detections["bbox"]
@@ -55,6 +68,9 @@ class TeamAssigner:
         self.team_colors[2] = kmeans.cluster_centers_[1]
 
     def get_player_team(self, frame, player_bbox, player_id):
+        """
+        Predict the team ID for a specific player.
+        """
         if player_id in self.player_team_dict:
             return self.player_team_dict[player_id]
 

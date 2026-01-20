@@ -12,11 +12,18 @@ from utils import get_center_of_bbox, get_bbox_width, get_foot_position
 
 
 class Tracker:
+    """
+    Handles object detection, tracking, and visualization for players, referees, and the ball.
+    """
+
     def __init__(self, model_path):
         self.model = YOLO(model_path)
         self.tracker = sv.ByteTrack()
 
     def interpolate_ball_positions(self, ball_positions):
+        """
+        Interpolate missing ball positions to handle detection failures.
+        """
         ball_positions = [x.get(1, {}).get("bbox", []) for x in ball_positions]
         df_ball_positions = pd.DataFrame(
             ball_positions, columns=["x1", "y1", "x2", "y2"]
@@ -33,6 +40,9 @@ class Tracker:
         return ball_positions
 
     def add_positions_to_tracks(self, tracks):
+        """
+        Calculate and add the specific position (center or foot) to the tracks.
+        """
         for object, object_tracks in tracks.items():
             for frame_num, track in enumerate(object_tracks):
                 for track_id, track_info in track.items():
@@ -44,6 +54,9 @@ class Tracker:
                     tracks[object][frame_num][track_id]["position"] = position
 
     def detect_frames(self, frames):
+        """
+        Run object detection on a list of video frames.
+        """
         batch_size = 20
         detections = []
         for i in range(0, len(frames), batch_size):
@@ -53,7 +66,9 @@ class Tracker:
         return detections
 
     def get_tracked_objects(self, frames, read_from_stub=False, stub_path=None):
-
+        """
+        Detect and track objects across video frames, optionally saving/loading from a stub file.
+        """
         if read_from_stub and stub_path is not None and os.path.exists(stub_path):
             with open(stub_path, "rb") as f:
                 tracks = pickle.load(f)
@@ -116,6 +131,9 @@ class Tracker:
         return tracks
 
     def draw_ellipse(self, frame, bbox, color, track_id=None):
+        """
+        Draw an ellipse around the base of an object (e.g., player's feet).
+        """
         y2 = int(bbox[3])
 
         x_center, _ = get_center_of_bbox(bbox)
@@ -165,6 +183,9 @@ class Tracker:
         return frame
 
     def draw_triangle(self, frame, bbox, color):
+        """
+        Draw a triangle indicator above an object (e.g., the ball or player).
+        """
         y = int(bbox[1])
         x, _ = get_center_of_bbox(bbox)
 
@@ -175,6 +196,9 @@ class Tracker:
         return frame
 
     def draw_team_ball_control(self, frame, frame_num, team_ball_control):
+        """
+        Visualize team ball control statistics (possession percentage) on the frame.
+        """
         # draw a semi-transparent rectangle
         overlay = frame.copy()
         cv2.rectangle(overlay, (1350, 850), (1900, 970), (255, 255, 255), cv2.FILLED)
@@ -216,6 +240,9 @@ class Tracker:
         return frame
 
     def draw_annotations(self, frames, tracks, team_ball_control):
+        """
+        Draw all visual annotations (players, ball, referees, stats) on the video frames.
+        """
         output_video_frames = []
 
         for frame_num, frame in enumerate(frames):
