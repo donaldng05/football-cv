@@ -1,0 +1,12 @@
+model:
+  path: "models/best.pt"
+  confidence: 0.1
+
+video:
+  input_path: "input_videos/"
+  output_path: "output_videos/"
+  frame_rate: 25
+
+tracking:
+  max_player_ball_distance: 70
+  speed_window_frames: 5
