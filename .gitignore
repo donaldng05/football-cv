@@ -1,9 +1,40 @@
-/training
-/.venv
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache & build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# IDE & Editor files
 .vscode/
 .idea/
-/input_videos
-/output_videos
+*.swp
+*.swo
+
+# Code quality & testing
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# CodeGraph local index
+.codegraph/
+
+# Training & Experiment tracking
+/training
 /runs
 /stubs
+
+# Large weights & video directories
 yolov8x.pt
+/input_videos/
+/output_videos/*
+!/output_videos/.gitkeep
