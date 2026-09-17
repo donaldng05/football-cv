@@ -38,3 +38,4 @@ yolov8x.pt
 /input_videos/
 /output_videos/*
 !/output_videos/.gitkeep
+/outputs/
