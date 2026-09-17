@@ -1,0 +1,56 @@
+# ==============================================================================
+# football-cv: High Accuracy Configuration
+# Strict confidence cutoffs and GPU execution for maximum analytical precision
+# ==============================================================================
+
+model:
+  path: "models/best.pt"
+  confidence: 0.15
+  device: "cuda"
+  batch_size: 32
+
+video:
+  input_path: "input_videos/08fd33_4.mp4"
+  output_path: "output_videos/high_accuracy_output.avi"
+  frame_rate: 25.0
+  start_frame: 0
+  end_frame: null
+
+tracking:
+  use_cached_tracks: false
+  cache_path: "stubs/track_stubs_high_acc.pkl"
+  camera_movement_cache_path: "stubs/camera_movement_high_acc.pkl"
+
+possession:
+  max_player_ball_distance: 65.0
+  minimum_control_frames: 4
+  maximum_missing_ball_frames: 8
+
+movement:
+  speed_window_frames: 5
+  minimum_displacement: 0.05
+
+perspective:
+  pixel_vertices:
+    - [110, 1035]
+    - [265, 275]
+    - [910, 260]
+    - [1640, 915]
+  court_width: 68.0
+  court_length: 23.32
+
+analytics:
+  enabled: true
+  export_events: true
+  export_dir: "outputs/high_accuracy_analytics"
+  heatmap:
+    enabled: true
+    grid_width: 80
+    grid_height: 50
+  pass_network:
+    enabled: true
+    maximum_transition_frames: 20
+
+logging:
+  level: "INFO"
+  log_file: "outputs/logs/football-cv-high-acc.log"
