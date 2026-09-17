@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software or adapt its methodologies, please cite it as below."
+title: "football-cv: Computer Vision & Advanced Football Analytics Pipeline"
+authors:
+  - family-names: "Duong"
+    given-names: "Quy"
+date-released: 2024-09-17
+url: "https://github.com/donaldng05/football-cv"
+license: "MIT"
+type: "software"
+keywords:
+  - "computer-vision"
+  - "football-analytics"
+  - "sports-analytics"
+  - "yolov8"
+  - "bytetrack"
+  - "object-tracking"
+  - "optical-flow"
+  - "homography"
