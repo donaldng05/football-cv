@@ -1,0 +1,28 @@
+name: Feature Request
+description: Suggest an enhancement or new analytics capability for football-cv
+title: "[Feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for a new feature, computer vision model, or football analytics model? Let us know!
+  - type: textarea
+    id: problem
+    attributes:
+      label: Motivation / Problem Statement
+      description: Is your feature request related to a problem or limitation?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution or new capability you'd like to see implemented.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: A clear description of any alternative solutions or features you've considered.
