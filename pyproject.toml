@@ -73,3 +73,7 @@ ignore = ["B008", "E501"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v"
+filterwarnings = [
+    "ignore::FutureWarning:supervision.*",
+    "ignore::UserWarning:sklearn.*",
+]

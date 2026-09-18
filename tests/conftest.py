@@ -2,12 +2,45 @@
 Shared test fixtures and synthetic data generators for football_cv.
 """
 
+from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 import pytest
 
 from football_cv.config import AppConfig, load_config
+
+
+def _generate_synthetic_video(
+    output_path: Path,
+    num_frames: int = 750,
+    width: int = 1920,
+    height: int = 1080,
+    fps: float = 25.0,
+) -> None:
+    """Generate a valid synthetic video container for testing."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+    frame = np.full((height, width, 3), fill_value=(40, 120, 40), dtype=np.uint8)
+    for _ in range(num_frames):
+        writer.write(frame)
+    writer.release()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_sample_match_video() -> Path:
+    """
+    Ensure the default match video (input_videos/08fd33_4.mp4) exists for testing.
+    Synthesizes a 750-frame 1080p video container if missing in the environment.
+    """
+    video_path = Path("input_videos/08fd33_4.mp4")
+    if not video_path.exists():
+        _generate_synthetic_video(
+            video_path, num_frames=750, width=1920, height=1080, fps=25.0
+        )
+    return video_path
 
 
 @pytest.fixture

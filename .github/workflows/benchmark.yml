@@ -29,6 +29,9 @@ jobs:
       - name: Install Package
         run: pip install -e .
 
+      - name: Ensure Test Video Asset
+        run: python scripts/generate_dummy_video.py
+
       - name: Run Benchmark Profiler
         run: |
           FRAMES="${{ github.event.inputs.num_frames || '50' }}"
