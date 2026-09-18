@@ -1,0 +1,56 @@
+# ==============================================================================
+# football-cv: Performance Benchmarking Configuration
+# Standardized baseline for hardware throughput and stage latency profiling
+# ==============================================================================
+
+model:
+  path: "models/best.pt"
+  confidence: 0.10
+  device: "auto"
+  batch_size: 20
+
+video:
+  input_path: "input_videos/08fd33_4.mp4"
+  output_path: "output_videos/benchmark_output.avi"
+  frame_rate: 25.0
+  start_frame: 0
+  end_frame: 100
+
+tracking:
+  use_cached_tracks: false
+  cache_path: "stubs/track_stubs.pkl"
+  camera_movement_cache_path: "stubs/camera_movement_stubs.pkl"
+
+possession:
+  max_player_ball_distance: 70.0
+  minimum_control_frames: 3
+  maximum_missing_ball_frames: 10
+
+movement:
+  speed_window_frames: 5
+  minimum_displacement: 0.0
+
+perspective:
+  pixel_vertices:
+    - [110, 1035]
+    - [265, 275]
+    - [910, 260]
+    - [1640, 915]
+  court_width: 68.0
+  court_length: 23.32
+
+analytics:
+  enabled: true
+  export_events: false
+  export_dir: "outputs/analytics"
+  heatmap:
+    enabled: false
+    grid_width: 60
+    grid_height: 40
+  pass_network:
+    enabled: false
+    maximum_transition_frames: 15
+
+logging:
+  level: "INFO"
+  log_file: "outputs/logs/football-cv-benchmark.log"

@@ -29,3 +29,7 @@ class TrackingError(FootballCVError):
 
 class AnalyticsError(FootballCVError):
     """Raised when calculating higher-order football analytics fails."""
+
+
+class BenchmarkError(FootballCVError):
+    """Raised when running or exporting pipeline benchmarks fails."""

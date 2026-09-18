@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .config import load_config
@@ -170,6 +171,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     benchmark_parser.add_argument(
         "--device", type=str, help="Override benchmark device ('cpu', 'cuda')"
+    )
+    benchmark_parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="reports/benchmarks",
+        help="Directory to save benchmark reports (default: reports/benchmarks)",
+    )
+    benchmark_parser.add_argument(
+        "--models",
+        type=str,
+        default=None,
+        help="Comma-separated model checkpoint paths to evaluate",
+    )
+    benchmark_parser.add_argument(
+        "--confidences",
+        type=str,
+        default=None,
+        help="Comma-separated detection confidence thresholds to sweep",
+    )
+    benchmark_parser.add_argument(
+        "--warmup",
+        type=int,
+        default=5,
+        help="Number of warmup frames to execute before profiling (default: 5)",
+    )
+    benchmark_parser.add_argument(
+        "--use-stubs",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Whether to use cached track stubs (default: from config)",
     )
 
     return parser
@@ -372,14 +403,57 @@ def handle_report(args: argparse.Namespace) -> int:
 
 def handle_benchmark(args: argparse.Namespace) -> int:
     try:
-        config = load_config(args.config)
+        overrides: dict[str, Any] = {}
+        if getattr(args, "device", None):
+            overrides.setdefault("model", {})["device"] = args.device
+        if getattr(args, "use_stubs", None) is not None:
+            overrides.setdefault("tracking", {})["use_cached_tracks"] = args.use_stubs
+
+        config = load_config(args.config, overrides=overrides if overrides else None)
         logger = setup_logging(level=config.logging.level)
         logger.info(f"Benchmarking runner initialized ({args.num_frames} frames)")
-        print(
-            f"[INFO] Benchmark configured for {args.num_frames} frames using {config.model.path}"
+
+        from .benchmark.environment import EnvironmentCollector
+        from .benchmark.exporter import BenchmarkExporter
+        from .benchmark.runner import BenchmarkRunner
+
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        models_list = None
+        if getattr(args, "models", None):
+            models_list = [m.strip() for m in args.models.split(",") if m.strip()]
+
+        conf_list = None
+        if getattr(args, "confidences", None):
+            conf_list = [
+                float(c.strip()) for c in args.confidences.split(",") if c.strip()
+            ]
+
+        runner = BenchmarkRunner(
+            base_config=config,
+            warmup_frames=getattr(args, "warmup", 5),
         )
+
+        report = runner.run_sweep(
+            config=config,
+            num_frames=args.num_frames,
+            confidences=conf_list,
+            models=models_list,
+        )
+
+        csv_path = BenchmarkExporter.export_csv(report, output_dir / "results.csv")
+        json_path = BenchmarkExporter.export_json(report, output_dir / "results.json")
+        env_path = EnvironmentCollector.export_json(output_dir / "environment.json")
+
+        print(BenchmarkExporter.format_terminal_table(report))
+        print("\n[PASS] Benchmark completed successfully:")
+        print(f"  - Results CSV: {csv_path}")
+        print(f"  - Results JSON: {json_path}")
+        print(f"  - Environment:  {env_path}\n")
+
         return 0
-    except FootballCVError as exc:
+    except (FootballCVError, ValueError) as exc:
         print(f"[FAIL] Benchmark error: {exc}", file=sys.stderr)
         return 1
 
