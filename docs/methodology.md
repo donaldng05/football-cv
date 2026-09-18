@@ -90,3 +90,14 @@ Points outside the pitch polygon boundary are safely filtered to prevent erroneo
    - If $\text{team}(A) == \text{team}(B)$: classified as a **`candidate_pass`**.
    - If $\text{team}(A) \ne \text{team}(B)$: classified as a **`turnover`**.
    - If transitioning from unassigned state: classified as a **`recovery`**.
+
+### E. Possession Dominance Heatmaps
+1. **Explainable Spatial Dominance**:
+   Standard positional heatmaps measure raw player occupancy across the match, resulting in central congestion that fails to reflect tactical on-ball dominance. The possession heatmap strictly aggregates frames where `has_ball == True` and coordinates $(x_{\text{pitch}}, y_{\text{pitch}})$ are calibrated on the 2D tactical pitch.
+2. **Duration Weighting ($\Delta t$)**:
+   Each observation is weighted by the frame interval $\Delta t = 1 / \text{fps}$ (seconds) rather than raw frame detections. The resulting grid directly represents true on-ball control time in seconds:
+   $$G[r, c] = \sum_{i \in \text{cell}(r, c)} \Delta t_i$$
+3. **Continuous Density Smoothing**:
+   A 2D Gaussian kernel ($G_{\sigma}$) is convolved over the discrete 2D histogram grid to yield smooth possession density contours while preserving total control duration.
+4. **Artifacts & Data Delivery**:
+   Figures are overlaid onto dimensionally accurate 2D tactical pitches (FIFA $105\text{ m} \times 68\text{ m}$) with dynamic alpha gradients (`outputs/report/heatmaps/team_{id}_possession.png`), alongside tabular grid density matrices (`outputs/report/data/possession_heatmap.csv`).
