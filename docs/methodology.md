@@ -101,3 +101,15 @@ Points outside the pitch polygon boundary are safely filtered to prevent erroneo
    A 2D Gaussian kernel ($G_{\sigma}$) is convolved over the discrete 2D histogram grid to yield smooth possession density contours while preserving total control duration.
 4. **Artifacts & Data Delivery**:
    Figures are overlaid onto dimensionally accurate 2D tactical pitches (FIFA $105\text{ m} \times 68\text{ m}$) with dynamic alpha gradients (`outputs/report/heatmaps/team_{id}_possession.png`), alongside tabular grid density matrices (`outputs/report/data/possession_heatmap.csv`).
+
+### F. Pass-Network Graph Inference
+1. **Graph Formulation & Node Identities**:
+   Team ball circulation is modeled as a weighted directed graph $G = (V, E)$ overlaid on pitch dimensions:
+   - **Nodes ($v \in V$):** Positioned at the empirical spatial centroid $(\bar{x}_{\text{pitch}}, \bar{y}_{\text{pitch}})$ of each player Track ID across possession and pass initiation events. Node radii scale with total on-ball involvement and possession duration. To maintain scientific integrity and avoid false identity assignment, nodes are labeled by computer-vision Track ID (e.g., `#10`) rather than unverified real-player roster names.
+   - **Edges ($(u, v) \in E$):** Directed connections representing validated `candidate_pass` transitions from player $u$ to teammate $v$. Edge line thickness scales proportionally with pass volume, and arrow opacity maps to mean transition confidence.
+2. **Noise Mitigation & Edge Pruning**:
+   - *Temporal Windowing:* Transitions taking longer than `maximum_transition_frames` (default: 15 frames / 0.6s) without clear ball tracking are downgraded to `uncertain_transition` and excluded from pass-network edges.
+   - *Edge Pruning:* A configurable `min_passes` threshold (default: 1 for short clips) eliminates low-frequency spurious handovers in dense match scrums.
+3. **Exported Artifacts**:
+   - Rendered tactical figures: `outputs/report/pass_networks/team_{id}_pass_network.png`
+   - Tabular graph datasets: `outputs/report/data/pass_network_nodes.csv` and `pass_network_edges.csv`.
