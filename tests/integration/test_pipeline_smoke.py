@@ -15,7 +15,11 @@ def test_pipeline_smoke_end_to_end(tmp_path):
             "end_frame": 3,
             "output_path": str(out_video),
         },
-        "tracking": {"use_cached_tracks": True},
+        "tracking": {
+            "use_cached_tracks": False,
+            "cache_path": str(tmp_path / "track_stubs.pkl"),
+            "camera_movement_cache_path": str(tmp_path / "cam_stubs.pkl"),
+        },
     }
     config = load_config("configs/fast.yaml", overrides=overrides)
     pipeline = MatchPipeline(config)

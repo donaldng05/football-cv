@@ -74,6 +74,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v"
 filterwarnings = [
+    "ignore:.*ByteTrack.*:FutureWarning",
     "ignore::FutureWarning:supervision.*",
     "ignore::UserWarning:sklearn.*",
 ]

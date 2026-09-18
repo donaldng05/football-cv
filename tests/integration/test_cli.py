@@ -40,6 +40,7 @@ class TestCLIIntegration:
 
     def test_cli_analyze_execution_smoke(self, tmp_path):
         out_vid = tmp_path / "cli_out.avi"
+        stub_file = tmp_path / "cli_track_stubs.pkl"
         ret = main(
             [
                 "analyze",
@@ -51,6 +52,8 @@ class TestCLIIntegration:
                 "2",
                 "--output",
                 str(out_vid),
+                "--stub-path",
+                str(stub_file),
             ]
         )
         assert ret == 0

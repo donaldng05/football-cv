@@ -76,6 +76,10 @@ class MatchPipeline:
             tracks["players"] = tracks["players"][start_idx:end_idx]
             tracks["referees"] = tracks["referees"][start_idx:end_idx]
             tracks["balls"] = tracks["balls"][start_idx:end_idx]
+        while len(tracks["players"]) < len(frames):
+            tracks["players"].append({})
+            tracks["referees"].append({})
+            tracks["balls"].append({})
 
         self.tracker.add_positions_to_tracks(tracks)
 
@@ -87,6 +91,8 @@ class MatchPipeline:
         )
         if len(camera_movement) > len(frames):
             camera_movement = camera_movement[start_idx:end_idx]
+        while len(camera_movement) < len(frames):
+            camera_movement.append((0.0, 0.0))
 
         cam_estimator.add_adjust_positions_to_tracks(tracks, camera_movement)
 
