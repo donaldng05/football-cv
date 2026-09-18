@@ -235,7 +235,7 @@ def load_config(
 
     if target_path is not None:
         try:
-            with open(target_path, "r", encoding="utf-8") as f:
+            with open(target_path, encoding="utf-8") as f:
                 loaded = yaml.safe_load(f)
                 if loaded is not None:
                     if not isinstance(loaded, dict):

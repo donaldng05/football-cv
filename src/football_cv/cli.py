@@ -217,7 +217,7 @@ def handle_validate(args: argparse.Namespace) -> int:
     except (ConfigurationError, ValidationError) as exc:
         print(f"\n[FAIL] Validation Failed: {exc}\n", file=sys.stderr)
         return 1
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"\n[ERROR] Unexpected error during validation: {exc}\n", file=sys.stderr)
         return 2
 
@@ -241,14 +241,16 @@ def handle_analyze(args: argparse.Namespace) -> int:
         )
         logger.info(f"Tracking cache enabled: {config.tracking.use_cached_tracks}")
 
-        # In Phase 2, verify assets before starting execution
         run_preflight_checks(config)
         logger.info("Pre-flight asset validation passed.")
 
-        # Note: In Milestone 3, full decoupled pipeline orchestration is invoked here
-        print("\n>>> Pipeline configuration loaded and verified successfully. <<<")
+        from .pipeline import MatchPipeline
+
+        pipeline = MatchPipeline(config)
+        pipeline.run()
+
         print(
-            "To execute the legacy pipeline with these settings, run: python main.py\n"
+            f"\n>>> Video analysis complete! Annotated output saved to: {config.video.output_path} <<<\n"
         )
         return 0
 
