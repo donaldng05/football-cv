@@ -5,8 +5,8 @@ Ball Tracking, Possession Intervals, Candidate Events, and Run Metadata.
 """
 
 import csv
-from datetime import UTC, datetime
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
