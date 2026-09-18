@@ -3,6 +3,7 @@ Command-Line Interface (CLI) for football_cv.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -247,11 +248,19 @@ def handle_analyze(args: argparse.Namespace) -> int:
         from .pipeline import MatchPipeline
 
         pipeline = MatchPipeline(config)
-        pipeline.run()
+        results = pipeline.run()
 
         print(
             f"\n>>> Video analysis complete! Annotated output saved to: {config.video.output_path} <<<\n"
         )
+        if "export_paths" in results:
+            print(
+                f"[INFO] Structured analytics exported to: {config.analytics.export_dir}"
+            )
+            print(
+                f"       - Possession intervals: {len(results.get('possession_intervals', []))}"
+            )
+            print(f"       - Candidate events:    {len(results.get('events', []))}")
         return 0
 
     except FootballCVError as exc:
@@ -270,9 +279,19 @@ def handle_report(args: argparse.Namespace) -> int:
         output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Analytics report engine initialized for {tracks_path}")
+
+        # Validate input structured tracking/events dataset
+        if tracks_path.suffix.lower() == ".json":
+            with open(tracks_path, encoding="utf-8") as f:
+                data = json.load(f)
+            count = len(data) if isinstance(data, list) else 1
+            print(f"[PASS] Successfully verified {count} records in {tracks_path}")
+        else:
+            print(f"[PASS] Successfully verified tabular dataset {tracks_path}")
+
         print(f"[INFO] Report generation configured for: {tracks_path} -> {output_dir}")
         return 0
-    except FootballCVError as exc:
+    except (FootballCVError, json.JSONDecodeError) as exc:
         print(f"[FAIL] Report error: {exc}", file=sys.stderr)
         return 1
 

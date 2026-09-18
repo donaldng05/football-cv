@@ -7,11 +7,13 @@ from typing import Any
 
 import numpy as np
 
+from .analytics import AnalyticsExporter, CandidateEvent, EventBuilder
 from .camera_motion.estimator import CameraMotionEstimator
 from .config import AppConfig
 from .movement.speed_distance import SpeedDistanceEstimator
 from .perspective.transformer import PerspectiveTransformer
 from .possession.assigner import PlayerBallAssigner
+from .possession.events import PossessionInterval, PossessionIntervalExtractor
 from .possession.interpolation import BallInterpolator
 from .rendering.annotations import FrameAnnotator
 from .rendering.video_writer import AnnotatedVideoWriter
@@ -50,6 +52,19 @@ class MatchPipeline:
             max_player_ball_distance=config.possession.max_player_ball_distance
         )
         self.annotator = FrameAnnotator()
+
+        self.interval_extractor = PossessionIntervalExtractor(
+            minimum_control_frames=config.possession.minimum_control_frames,
+            fps=config.video.frame_rate,
+        )
+        self.event_builder = EventBuilder(
+            maximum_transition_frames=config.analytics.pass_network.maximum_transition_frames,
+            fps=config.video.frame_rate,
+        )
+        self.exporter = AnalyticsExporter(
+            output_dir=config.analytics.export_dir,
+            fps=config.video.frame_rate,
+        )
 
     def process(
         self, frames: list[np.ndarray], tracks_stub_path: str | None = None
@@ -141,10 +156,25 @@ class MatchPipeline:
                 last_team = team_ball_control[-1] if team_ball_control else 1
                 team_ball_control.append(last_team)
 
+        # 8. Possession intervals and candidate events
+        intervals: list[PossessionInterval] = []
+        events: list[CandidateEvent] = []
+        if self.config.analytics.enabled:
+            intervals = self.interval_extractor.extract_intervals(
+                player_tracks=tracks["players"],
+                team_ball_control=team_ball_control,
+            )
+            events = self.event_builder.build_events(
+                intervals=intervals,
+                player_tracks=tracks["players"],
+            )
+
         return {
             "tracks": tracks,
             "camera_movement": camera_movement,
             "team_ball_control": np.array(team_ball_control),
+            "possession_intervals": intervals,
+            "events": events,
         }
 
     def render(
@@ -193,4 +223,17 @@ class MatchPipeline:
             camera_movement=results["camera_movement"],
             team_ball_control=results["team_ball_control"],
         )
+
+        if self.config.analytics.enabled and self.config.analytics.export_events:
+            logger.info(
+                f"Exporting structured match data to {self.config.analytics.export_dir}"
+            )
+            export_paths = self.exporter.export_all(
+                tracks=results["tracks"],
+                intervals=results["possession_intervals"],
+                events=results["events"],
+                config=self.config,
+            )
+            results["export_paths"] = export_paths
+
         return results
