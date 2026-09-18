@@ -203,6 +203,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Whether to use cached track stubs (default: from config)",
     )
 
+    # --------------------------------------------------------------------------
+    # Subcommand: error-analysis
+    # --------------------------------------------------------------------------
+    error_parser = subparsers.add_parser(
+        "error-analysis",
+        help="Run rigorous failure case diagnostics and export mitigation reports",
+    )
+    error_parser.add_argument(
+        "-c",
+        "--config",
+        type=str,
+        default="configs/default.yaml",
+        help="Path to YAML configuration file",
+    )
+    error_parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="reports/error_analysis",
+        help="Directory to save error analysis reports (default: reports/error_analysis)",
+    )
+
     return parser
 
 
@@ -458,6 +479,41 @@ def handle_benchmark(args: argparse.Namespace) -> int:
         return 1
 
 
+def handle_error_analysis(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+        logger = setup_logging(level=config.logging.level)
+        logger.info("Executing rigorous error analysis diagnostic suite")
+
+        from .analytics.error_analysis import (
+            ErrorAnalysisExporter,
+            FailureCaseEvaluator,
+        )
+
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        evaluator = FailureCaseEvaluator(fps=config.video.frame_rate)
+        report = evaluator.run_suite()
+
+        json_path = ErrorAnalysisExporter.export_json(
+            report, output_dir / "error_report.json"
+        )
+        csv_path = ErrorAnalysisExporter.export_csv(
+            report, output_dir / "mitigation_summary.csv"
+        )
+
+        print(ErrorAnalysisExporter.format_terminal_table(report))
+        print("\n[PASS] Error analysis completed successfully:")
+        print(f"  - Detailed Report JSON: {json_path}")
+        print(f"  - Mitigation Summary CSV: {csv_path}\n")
+
+        return 0
+    except (FootballCVError, ValueError, OSError) as exc:
+        print(f"[FAIL] Error analysis error: {exc}", file=sys.stderr)
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -470,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_report(args)
     elif args.command == "benchmark":
         return handle_benchmark(args)
+    elif args.command == "error-analysis":
+        return handle_error_analysis(args)
 
     return 0
 

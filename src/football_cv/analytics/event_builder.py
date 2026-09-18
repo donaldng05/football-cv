@@ -61,9 +61,15 @@ class EventBuilder:
         self,
         maximum_transition_frames: int = 15,
         fps: float = 25.0,
+        validate_kinematics: bool = True,
+        maximum_pass_speed: float = 45.0,
+        minimum_track_swap_distance: float = 1.5,
     ):
         self.maximum_transition_frames = max(1, maximum_transition_frames)
         self.fps = fps if fps > 0 else 25.0
+        self.validate_kinematics = validate_kinematics
+        self.maximum_pass_speed = maximum_pass_speed
+        self.minimum_track_swap_distance = minimum_track_swap_distance
 
     @staticmethod
     def _extract_coords(
@@ -153,10 +159,36 @@ class EventBuilder:
                     event_type = EventType.RECOVERY.value
                     confidence = 0.70
 
+            # Validate kinematic plausibility for candidate passes
+            if (
+                self.validate_kinematics
+                and event_type == EventType.CANDIDATE_PASS.value
+                and sx_p is not None
+                and ex_p is not None
+                and sy_p is not None
+                and ey_p is not None
+            ):
+                displacement = ((ex_p - sx_p) ** 2 + (ey_p - sy_p) ** 2) ** 0.5
+                duration_sec = max(1, transition_frames) / self.fps
+                speed = displacement / max(0.0001, duration_sec)
+
+                if (
+                    transition_frames <= 2
+                    and displacement < self.minimum_track_swap_distance
+                ):
+                    # Near-zero spatial displacement across immediate frames is a tracker ID swap
+                    event_type = EventType.EXCLUDED.value
+                    confidence = 0.95
+                elif speed > self.maximum_pass_speed:
+                    # Implausible superhuman speed (> 45 m/s) indicates tracking teleportation/jump
+                    event_type = EventType.UNCERTAIN_TRANSITION.value
+                    confidence = 0.40
+
             # Downgrade if spatial coordinates are uncalibrated / off-pitch
             if sx_p is None or ex_p is None:
-                event_type = EventType.UNCERTAIN_TRANSITION.value
-                confidence = round(confidence * 0.6, 2)
+                if event_type != EventType.EXCLUDED.value:
+                    event_type = EventType.UNCERTAIN_TRANSITION.value
+                    confidence = round(confidence * 0.6, 2)
 
             events.append(
                 CandidateEvent(

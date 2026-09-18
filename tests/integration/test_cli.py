@@ -38,6 +38,11 @@ class TestCLIIntegration:
             main(["benchmark", "--help"])
         assert excinfo.value.code == 0
 
+    def test_cli_error_analysis_help(self):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["error-analysis", "--help"])
+        assert excinfo.value.code == 0
+
     def test_cli_analyze_execution_smoke(self, tmp_path):
         out_vid = tmp_path / "cli_out.avi"
         stub_file = tmp_path / "cli_track_stubs.pkl"

@@ -45,7 +45,7 @@ class TestEventBuilder:
                     "position_adjusted": (200.0, 300.0),
                 },
                 2: {
-                    "position_transformed": [45.0, 20.0],
+                    "position_transformed": [28.0, 16.0],
                     "position_adjusted": (500.0, 400.0),
                 },
             }
@@ -66,8 +66,8 @@ class TestEventBuilder:
         assert ev.transition_frames == 3
         assert ev.start_x_pitch == 25.0
         assert ev.start_y_pitch == 15.0
-        assert ev.end_x_pitch == 45.0
-        assert ev.end_y_pitch == 20.0
+        assert ev.end_x_pitch == 28.0
+        assert ev.end_y_pitch == 16.0
         assert ev.confidence >= 0.8
 
     def test_build_turnover_opposing_teams(self):
@@ -255,3 +255,94 @@ class TestEventBuilder:
         assert d["event_type"] == "candidate_pass"
         assert d["transition_frames"] == 2
         assert d["confidence"] == 0.88
+
+    def test_reject_track_swap_identity_switch(self):
+        # Two tracks on the same team, separated by 0.5m in 1 frame (identity switch)
+        intervals = [
+            PossessionInterval(
+                interval_id=1,
+                start_frame=0,
+                end_frame=4,
+                start_time=0.0,
+                end_time=0.16,
+                player_id=1,
+                team_id=1,
+                duration_seconds=0.2,
+                frame_count=5,
+                termination_reason="pass",
+            ),
+            PossessionInterval(
+                interval_id=2,
+                start_frame=5,
+                end_frame=10,
+                start_time=0.2,
+                end_time=0.4,
+                player_id=2,
+                team_id=1,
+                duration_seconds=0.24,
+                frame_count=6,
+                termination_reason="end_of_clip",
+            ),
+        ]
+        player_tracks = [
+            {
+                1: {"position_transformed": [30.0, 20.0]},
+                2: {"position_transformed": [30.3, 20.4]},  # dist = 0.5m
+            }
+            for _ in range(12)
+        ]
+
+        # With kinematics validation enabled (default)
+        builder = EventBuilder(fps=25.0)
+        events = builder.build_events(intervals, player_tracks)
+        assert len(events) == 1
+        assert events[0].event_type == EventType.EXCLUDED.value
+        assert events[0].confidence == 0.95
+
+        # With kinematics validation disabled, it is misclassified as a pass
+        builder_disabled = EventBuilder(fps=25.0, validate_kinematics=False)
+        events_disabled = builder_disabled.build_events(intervals, player_tracks)
+        assert len(events_disabled) == 1
+        assert events_disabled[0].event_type == EventType.CANDIDATE_PASS.value
+
+    def test_reject_superhuman_pass_velocity(self):
+        # Two tracks separated by 60m in 2 frames (v = 750 m/s > 45 m/s)
+        intervals = [
+            PossessionInterval(
+                interval_id=1,
+                start_frame=0,
+                end_frame=3,
+                start_time=0.0,
+                end_time=0.12,
+                player_id=1,
+                team_id=1,
+                duration_seconds=0.16,
+                frame_count=4,
+                termination_reason="pass",
+            ),
+            PossessionInterval(
+                interval_id=2,
+                start_frame=5,
+                end_frame=10,
+                start_time=0.2,
+                end_time=0.4,
+                player_id=2,
+                team_id=1,
+                duration_seconds=0.24,
+                frame_count=6,
+                termination_reason="end_of_clip",
+            ),
+        ]
+        player_tracks = [
+            {
+                1: {"position_transformed": [10.0, 10.0]},
+                2: {"position_transformed": [70.0, 10.0]},  # dist = 60m in 2 frames
+            }
+            for _ in range(12)
+        ]
+
+        builder = EventBuilder(fps=25.0, maximum_pass_speed=45.0)
+        events = builder.build_events(intervals, player_tracks)
+        assert len(events) == 1
+        assert events[0].event_type == EventType.UNCERTAIN_TRANSITION.value
+        assert events[0].confidence == 0.40

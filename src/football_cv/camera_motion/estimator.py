@@ -15,8 +15,14 @@ from ..utils.geometry import measure_distance, measure_xy_distance
 class CameraMotionEstimator:
     """Estimates pan and tilt motion using Lucas-Kanade optical flow on perimeter pixels."""
 
-    def __init__(self, first_frame: np.ndarray, minimum_distance: float = 5.0):
+    def __init__(
+        self,
+        first_frame: np.ndarray,
+        minimum_distance: float = 5.0,
+        scene_cut_threshold: float = 80.0,
+    ):
         self.minimum_distance = minimum_distance
+        self.scene_cut_threshold = scene_cut_threshold
 
         self.lk_params = dict(
             winSize=(15, 15),
@@ -114,7 +120,11 @@ class CameraMotionEstimator:
                         max_distance = dist
                         cam_dx, cam_dy = measure_xy_distance(old.ravel(), new.ravel())
 
-            if max_distance > self.minimum_distance:
+            if max_distance > self.scene_cut_threshold:
+                # Sudden flow magnitude jump indicates a scene cut or broadcast discontinuity
+                camera_movement.append((0.0, 0.0))
+                old_features = cv2.goodFeaturesToTrack(frame_gray, **self.features)
+            elif max_distance > self.minimum_distance:
                 camera_movement.append((cam_dx, cam_dy))
                 old_features = cv2.goodFeaturesToTrack(frame_gray, **self.features)
             else:
