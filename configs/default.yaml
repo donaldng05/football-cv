@@ -49,7 +49,7 @@ analytics:
     grid_height: 40
   pass_network:
     enabled: true
-    maximum_transition_frames: 15
+    maximum_transition_frames: 35
 
 logging:
   level: "INFO"

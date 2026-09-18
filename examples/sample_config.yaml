@@ -1,0 +1,84 @@
+# ==============================================================================
+# football-cv: Sample Configuration
+# ==============================================================================
+# Use this configuration template for custom video analysis, parameter tuning,
+# and headless testing. Override any setting via CLI using '--config'.
+
+model:
+  # Path to YOLOv8 weights checkpoint (.pt)
+  path: "models/best.pt"
+  # Minimum confidence threshold for player/referee/ball detections (0.0 to 1.0)
+  confidence: 0.15
+  # Inference device: 'cuda', 'cpu', or 'auto'
+  device: "auto"
+  # Batch size for batched YOLO frame inference
+  batch_size: 20
+
+video:
+  # Input match footage path
+  input_path: "input_videos/08fd33_4.mp4"
+  # Output annotated video destination path
+  output_path: "output_videos/annotated_match.avi"
+  # Video frame rate override (null to auto-detect from video container)
+  frame_rate: null
+  # Frame interval to process: null or 0-indexed integer
+  start_frame: 0
+  end_frame: 300
+
+tracking:
+  # Accelerate repeated runs by reusing cached ByteTrack & optical flow stubs
+  use_cached_tracks: true
+  cache_path: "stubs/track_stubs.pkl"
+
+possession:
+  # Maximum Euclidean distance (pixels) between player bbox centroid and ball
+  max_player_ball_distance: 70.0
+  # Minimum consecutive frames of control required to confirm possession
+  minimum_control_frames: 3
+  # Maximum allowable ball detection dropout frames before resetting control
+  maximum_missing_ball_frames: 10
+
+movement:
+  # Moving average smoothing window size for player speed calculation
+  speed_window_frames: 5
+  # Minimum displacement in meters below which velocity is clamped to 0.0
+  minimum_displacement: 0.0
+
+perspective:
+  # Four image pixel coordinate pairs [x, y] defining pitch calibration quadrilateral
+  pixel_vertices:
+    - [110.0, 1035.0]  # Bottom-left corner
+    - [265.0, 275.0]   # Top-left corner
+    - [910.0, 260.0]   # Top-right corner
+    - [1640.0, 915.0]  # Bottom-right corner
+  # Real-world metric dimensions (meters) corresponding to calibration polygon
+  court_width: 68.0
+  court_length: 23.32
+
+analytics:
+  enabled: true
+  # Export frame-level tracking, possession intervals, and candidate events
+  export_events: true
+  export_dir: "outputs/analytics"
+  heatmap:
+    enabled: true
+    grid_width: 60
+    grid_height: 40
+    pitch_length: 105.0
+    pitch_width: 68.0
+    colormap: "inferno"
+    sigma: 1.5
+    theme: "tactical_dark"
+    min_confidence: 0.0
+  pass_network:
+    enabled: true
+    maximum_transition_frames: 15
+    min_passes: 1
+    min_confidence: 0.0
+    theme: "tactical_dark"
+    node_scale: 1.0
+    edge_scale: 1.0
+
+logging:
+  level: "INFO"
+  log_file: "outputs/logs/football-cv.log"
