@@ -3,11 +3,17 @@ Decoupled end-to-end computer vision and analytics pipeline orchestrator.
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from .analytics import AnalyticsExporter, CandidateEvent, EventBuilder
+from .analytics import (
+    AnalyticsExporter,
+    CandidateEvent,
+    EventBuilder,
+    HeatmapGenerator,
+)
 from .camera_motion.estimator import CameraMotionEstimator
 from .config import AppConfig
 from .movement.speed_distance import SpeedDistanceEstimator
@@ -235,5 +241,17 @@ class MatchPipeline:
                 config=self.config,
             )
             results["export_paths"] = export_paths
+
+        if self.config.analytics.enabled and self.config.analytics.heatmap.enabled:
+            logger.info("Generating possession heatmaps")
+            report_dir = Path(self.config.analytics.export_dir).parent / "report"
+            heatmap_gen = HeatmapGenerator(config=self.config, output_dir=report_dir)
+            if (
+                "export_paths" in results
+                and "player_tracking_json" in results["export_paths"]
+            ):
+                results["heatmap_paths"] = heatmap_gen.generate_from_file(
+                    results["export_paths"]["player_tracking_json"]
+                )
 
         return results
