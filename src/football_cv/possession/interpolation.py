@@ -35,7 +35,13 @@ class BallInterpolator:
             else:
                 extracted_boxes.append([None, None, None, None])
 
-        df_boxes = pd.DataFrame(extracted_boxes, columns=["x1", "y1", "x2", "y2"])
+        df_boxes = pd.DataFrame(
+            extracted_boxes, columns=["x1", "y1", "x2", "y2"], dtype=float
+        )
+
+        # If no ball detections exist across all frames, return original empty frames
+        if df_boxes.isna().all().all():
+            return ball_positions
 
         # Interpolate bounded gaps
         df_boxes = df_boxes.interpolate(limit=limit)

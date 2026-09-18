@@ -63,6 +63,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+extend-exclude = ["development_and_analysis"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "RUF"]
@@ -72,3 +73,8 @@ ignore = ["B008", "E501"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v"
+filterwarnings = [
+    "ignore:.*ByteTrack.*:FutureWarning",
+    "ignore::FutureWarning:supervision.*",
+    "ignore::UserWarning:sklearn.*",
+]

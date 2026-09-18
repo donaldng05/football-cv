@@ -1,0 +1,38 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      num_frames:
+        description: "Number of frames to profile"
+        required: false
+        default: "50"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  benchmark:
+    name: Run Performance Benchmarking
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Package
+        run: pip install -e .
+
+      - name: Ensure Test Video Asset
+        run: python scripts/generate_dummy_video.py
+
+      - name: Run Benchmark Profiler
+        run: |
+          FRAMES="${{ github.event.inputs.num_frames || '50' }}"
+          football-cv benchmark --config configs/fast.yaml --num-frames "$FRAMES"
