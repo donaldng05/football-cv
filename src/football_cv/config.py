@@ -152,10 +152,23 @@ class HeatmapConfig:
 class PassNetworkConfig:
     enabled: bool = True
     maximum_transition_frames: int = 15
+    min_passes: int = 1
+    min_confidence: float = 0.0
+    theme: str = "tactical_dark"
+    node_scale: float = 1.0
+    edge_scale: float = 1.0
 
     def validate(self) -> None:
         if self.maximum_transition_frames < 1:
             raise ConfigurationError("maximum_transition_frames must be >= 1")
+        if self.min_passes < 1:
+            raise ConfigurationError("min_passes must be >= 1")
+        if self.min_confidence < 0 or self.min_confidence > 1.0:
+            raise ConfigurationError(
+                "Pass network min_confidence must be between 0.0 and 1.0"
+            )
+        if self.node_scale <= 0 or self.edge_scale <= 0:
+            raise ConfigurationError("node_scale and edge_scale must be > 0")
 
 
 @dataclass
