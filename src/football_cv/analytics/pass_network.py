@@ -301,7 +301,16 @@ def render_pass_network(
     edge_color = "#7dd3fc" if network.team_id == 1 else "#fdba74"
     text_color = "#0f172a" if theme == "light" else "#ffffff"
 
-    # 1. Draw directed edges
+    # 1. Precompute node radii for arrow endpoint clipping
+    max_involvement = max(
+        [n.involvement_count for n in network.nodes.values()], default=1
+    )
+    node_radii: dict[int, float] = {}
+    for pid, node in network.nodes.items():
+        inv_ratio = node.involvement_count / max(1, max_involvement)
+        node_radii[pid] = (1.8 + np.sqrt(inv_ratio) * 1.6) * node_scale
+
+    # 2. Draw directed edges with visible directional arrowheads
     max_passes = max([e.pass_count for e in network.edges], default=1)
 
     for edge in network.edges:
@@ -317,19 +326,38 @@ def render_pass_network(
         x1, y1 = u_node.x_centroid, u_node.y_centroid
         x2, y2 = v_node.x_centroid, v_node.y_centroid
 
-        # Normalized stroke width (1.5 to 7.0 px)
+        dx = x2 - x1
+        dy = y2 - y1
+        dist = float(np.hypot(dx, dy))
+        if dist < 1e-3:
+            continue
+
+        ux = dx / dist
+        uy = dy / dist
+
+        r1 = node_radii.get(edge.from_player_id, 2.0 * node_scale)
+        r2 = node_radii.get(edge.to_player_id, 2.0 * node_scale)
+
+        # Offset start and end so arrow starts outside source and ends cleanly outside target
+        sx = x1 + ux * (r1 + 0.3)
+        sy = y1 + uy * (r1 + 0.3)
+        ex = x2 - ux * (r2 + 0.4)
+        ey = y2 - uy * (r2 + 0.4)
+
+        # Normalized stroke width (1.5 to 6.0 px)
         weight_norm = edge.pass_count / max(1, max_passes)
-        lw = (1.5 + weight_norm * 5.0) * edge_scale
+        lw = (1.5 + weight_norm * 4.5) * edge_scale
 
-        # Opacity mapped to transition confidence (0.35 to 0.90)
-        alpha = float(np.clip(edge.avg_confidence * 0.95, 0.35, 0.95))
+        # Opacity mapped to transition confidence (0.45 to 0.95)
+        alpha = float(np.clip(edge.avg_confidence * 0.95, 0.45, 0.95))
 
-        # Curved directed arrow to disambiguate bidirectional passes
+        # Curved directed arrow with crisp visible arrowhead
         arrow = FancyArrowPatch(
-            (x1, y1),
-            (x2, y2),
-            connectionstyle="arc3,rad=0.08",
-            arrowstyle="-|>,head_length=8,head_width=5",
+            (sx, sy),
+            (ex, ey),
+            connectionstyle="arc3,rad=0.15",
+            arrowstyle="-|>",
+            mutation_scale=13 + weight_norm * 4,
             color=edge_color,
             linewidth=lw,
             alpha=alpha,
@@ -337,14 +365,9 @@ def render_pass_network(
         )
         ax.add_patch(arrow)
 
-    # 2. Draw nodes and player track labels
-    max_involvement = max(
-        [n.involvement_count for n in network.nodes.values()], default=1
-    )
-
-    for node in network.nodes.values():
-        inv_ratio = node.involvement_count / max(1, max_involvement)
-        radius = (1.8 + np.sqrt(inv_ratio) * 1.6) * node_scale
+    # 3. Draw nodes and player track labels
+    for pid, node in network.nodes.items():
+        radius = node_radii[pid]
 
         # Outer glowing ring
         ax.add_patch(
