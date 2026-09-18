@@ -13,6 +13,7 @@ from .analytics import (
     CandidateEvent,
     EventBuilder,
     HeatmapGenerator,
+    PassNetworkGenerator,
 )
 from .camera_motion.estimator import CameraMotionEstimator
 from .config import AppConfig
@@ -253,5 +254,14 @@ class MatchPipeline:
                 results["heatmap_paths"] = heatmap_gen.generate_from_file(
                     results["export_paths"]["player_tracking_json"]
                 )
+
+        if self.config.analytics.enabled and self.config.analytics.pass_network.enabled:
+            logger.info("Generating tactical pass networks")
+            report_dir = Path(self.config.analytics.export_dir).parent / "report"
+            pass_gen = PassNetworkGenerator(config=self.config, output_dir=report_dir)
+            results["pass_network_paths"] = pass_gen.generate(
+                events=results.get("events", []),
+                intervals=results.get("possession_intervals", []),
+            )
 
         return results

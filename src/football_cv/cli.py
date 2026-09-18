@@ -136,6 +136,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Pitch visual theme (tactical_dark, classic_turf, light)",
     )
+    report_parser.add_argument(
+        "--events",
+        type=str,
+        default=None,
+        help="Optional path to candidate events JSON or CSV file",
+    )
+    report_parser.add_argument(
+        "--min-passes",
+        type=int,
+        default=None,
+        help="Minimum pass count threshold for rendering network edges",
+    )
 
     # --------------------------------------------------------------------------
     # Subcommand: benchmark
@@ -292,6 +304,10 @@ def handle_report(args: argparse.Namespace) -> int:
         config = load_config(args.config)
         if getattr(args, "theme", None):
             config.analytics.heatmap.theme = args.theme
+            config.analytics.pass_network.theme = args.theme
+        if getattr(args, "min_passes", None) is not None:
+            config.analytics.pass_network.min_passes = args.min_passes
+
         logger = setup_logging(level=config.logging.level)
         tracks_path = Path(args.tracks)
         if not tracks_path.exists():
@@ -301,14 +317,46 @@ def handle_report(args: argparse.Namespace) -> int:
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Analytics report engine initialized for {tracks_path}")
 
+        artifacts: dict[str, Path] = {}
+
+        # 1. Generate Heatmaps
         from .analytics.heatmap import HeatmapGenerator
 
-        generator = HeatmapGenerator(config=config, output_dir=output_dir)
-        artifacts = generator.generate_from_file(
-            file_path=tracks_path,
-            team_filter=getattr(args, "team", None),
-            player_filter=getattr(args, "player", None),
-        )
+        if "event" not in tracks_path.name.lower():
+            heatmap_gen = HeatmapGenerator(config=config, output_dir=output_dir)
+            hm_artifacts = heatmap_gen.generate_from_file(
+                file_path=tracks_path,
+                team_filter=getattr(args, "team", None),
+                player_filter=getattr(args, "player", None),
+            )
+            artifacts.update(hm_artifacts)
+
+        # 2. Generate Pass Networks
+        from .analytics.pass_network import PassNetworkGenerator
+
+        events_candidate: Path | None = None
+        if getattr(args, "events", None):
+            events_candidate = Path(args.events)
+        elif "event" in tracks_path.name.lower():
+            events_candidate = tracks_path
+        else:
+            sibling_json = tracks_path.parent / "events.json"
+            sibling_csv = tracks_path.parent / "events.csv"
+            if sibling_json.is_file():
+                events_candidate = sibling_json
+            elif sibling_csv.is_file():
+                events_candidate = sibling_csv
+
+        if events_candidate and events_candidate.is_file():
+            pass_gen = PassNetworkGenerator(config=config, output_dir=output_dir)
+            net_artifacts = pass_gen.generate_from_files(
+                events_path=events_candidate,
+                tracking_path=tracks_path
+                if "event" not in tracks_path.name.lower()
+                else None,
+                team_filter=getattr(args, "team", None),
+            )
+            artifacts.update(net_artifacts)
 
         print(
             f"[PASS] Successfully generated {len(artifacts)} reporting artifacts in {output_dir}"
