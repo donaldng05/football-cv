@@ -2,6 +2,16 @@
 Football analytics and structured data export package.
 """
 
+from .error_analysis import (
+    BENCHMARK_CASES,
+    CaseEvaluationResult,
+    ErrorAnalysisExporter,
+    ErrorReport,
+    FailureCase,
+    FailureCaseEvaluator,
+    FailureCategory,
+    FailureMode,
+)
 from .event_builder import CandidateEvent, EventBuilder, EventType
 from .exporter import AnalyticsExporter
 from .heatmap import (
@@ -24,10 +34,18 @@ from .pass_network import (
 from .pitch import create_pitch_figure, draw_pitch
 
 __all__ = [
+    "BENCHMARK_CASES",
     "AnalyticsExporter",
     "CandidateEvent",
+    "CaseEvaluationResult",
+    "ErrorAnalysisExporter",
+    "ErrorReport",
     "EventBuilder",
     "EventType",
+    "FailureCase",
+    "FailureCaseEvaluator",
+    "FailureCategory",
+    "FailureMode",
     "HeatmapGenerator",
     "PassEdge",
     "PassNetwork",
