@@ -63,6 +63,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+extend-exclude = ["development_and_analysis"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "RUF"]
