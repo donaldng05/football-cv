@@ -117,6 +117,25 @@ def build_parser() -> argparse.ArgumentParser:
         default="outputs/report",
         help="Directory to save generated figures and report cards",
     )
+    report_parser.add_argument(
+        "--team",
+        type=int,
+        default=None,
+        help="Filter report generation to a specific team ID (e.g. 1 or 2)",
+    )
+    report_parser.add_argument(
+        "--player",
+        type=int,
+        default=None,
+        help="Filter report generation to a specific player track ID",
+    )
+    report_parser.add_argument(
+        "--theme",
+        type=str,
+        choices=["tactical_dark", "classic_turf", "light"],
+        default=None,
+        help="Pitch visual theme (tactical_dark, classic_turf, light)",
+    )
 
     # --------------------------------------------------------------------------
     # Subcommand: benchmark
@@ -271,6 +290,8 @@ def handle_analyze(args: argparse.Namespace) -> int:
 def handle_report(args: argparse.Namespace) -> int:
     try:
         config = load_config(args.config)
+        if getattr(args, "theme", None):
+            config.analytics.heatmap.theme = args.theme
         logger = setup_logging(level=config.logging.level)
         tracks_path = Path(args.tracks)
         if not tracks_path.exists():
@@ -280,16 +301,21 @@ def handle_report(args: argparse.Namespace) -> int:
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Analytics report engine initialized for {tracks_path}")
 
-        # Validate input structured tracking/events dataset
-        if tracks_path.suffix.lower() == ".json":
-            with open(tracks_path, encoding="utf-8") as f:
-                data = json.load(f)
-            count = len(data) if isinstance(data, list) else 1
-            print(f"[PASS] Successfully verified {count} records in {tracks_path}")
-        else:
-            print(f"[PASS] Successfully verified tabular dataset {tracks_path}")
+        from .analytics.heatmap import HeatmapGenerator
 
-        print(f"[INFO] Report generation configured for: {tracks_path} -> {output_dir}")
+        generator = HeatmapGenerator(config=config, output_dir=output_dir)
+        artifacts = generator.generate_from_file(
+            file_path=tracks_path,
+            team_filter=getattr(args, "team", None),
+            player_filter=getattr(args, "player", None),
+        )
+
+        print(
+            f"[PASS] Successfully generated {len(artifacts)} reporting artifacts in {output_dir}"
+        )
+        for name, path in artifacts.items():
+            print(f"  - {name}: {path}")
+
         return 0
     except (FootballCVError, json.JSONDecodeError) as exc:
         print(f"[FAIL] Report error: {exc}", file=sys.stderr)

@@ -128,10 +128,24 @@ class HeatmapConfig:
     enabled: bool = True
     grid_width: int = 60
     grid_height: int = 40
+    pitch_length: float = 105.0
+    pitch_width: float = 68.0
+    colormap: str = "inferno"
+    sigma: float = 1.5
+    theme: str = "tactical_dark"
+    min_confidence: float = 0.0
 
     def validate(self) -> None:
         if self.grid_width < 2 or self.grid_height < 2:
             raise ConfigurationError("Heatmap grid dimensions must be >= 2")
+        if self.pitch_length <= 0 or self.pitch_width <= 0:
+            raise ConfigurationError("Pitch dimensions must be > 0")
+        if self.sigma < 0:
+            raise ConfigurationError("Heatmap sigma must be >= 0")
+        if self.min_confidence < 0 or self.min_confidence > 1.0:
+            raise ConfigurationError(
+                "Heatmap min_confidence must be between 0.0 and 1.0"
+            )
 
 
 @dataclass
