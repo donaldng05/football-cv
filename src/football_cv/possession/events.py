@@ -33,9 +33,77 @@ class PossessionIntervalExtractor:
     from frame-by-frame tracking detections.
     """
 
-    def __init__(self, minimum_control_frames: int = 1, fps: float = 25.0):
+    def __init__(
+        self,
+        minimum_control_frames: int = 1,
+        fps: float = 25.0,
+        hysteresis_frames: int = 0,
+        max_gap_frames: int = 0,
+    ):
         self.minimum_control_frames = max(1, minimum_control_frames)
         self.fps = fps if fps > 0 else 25.0
+        self.hysteresis_frames = max(0, hysteresis_frames)
+        self.max_gap_frames = max(0, max_gap_frames)
+
+    def _smooth_frame_assignments(
+        self,
+        assignments: list[tuple[int, int] | None],
+    ) -> list[tuple[int, int] | None]:
+        """
+        Apply gap-filling and hysteresis smoothing to frame-by-frame possession assignments.
+        """
+        n = len(assignments)
+        if n == 0:
+            return []
+
+        smoothed = list(assignments)
+
+        # 1. Short detection gap bridging: fill None gaps <= max_gap_frames between same player
+        if self.max_gap_frames > 0:
+            i = 0
+            while i < n:
+                if smoothed[i] is None:
+                    gap_start = i
+                    while i < n and smoothed[i] is None:
+                        i += 1
+                    gap_len = i - gap_start
+                    if gap_len <= self.max_gap_frames and gap_start > 0 and i < n:
+                        prev_val = smoothed[gap_start - 1]
+                        next_val = smoothed[i]
+                        if (
+                            prev_val is not None
+                            and next_val is not None
+                            and prev_val[0] == next_val[0]
+                        ):
+                            for k in range(gap_start, i):
+                                smoothed[k] = prev_val
+                else:
+                    i += 1
+
+        # 2. Hysteresis stabilization: suppress transient runs < hysteresis_frames that revert
+        if self.hysteresis_frames > 0:
+            i = 0
+            while i < n:
+                curr = smoothed[i]
+                if curr is not None:
+                    run_start = i
+                    while i < n and smoothed[i] == curr:
+                        i += 1
+                    run_len = i - run_start
+                    if run_len < self.hysteresis_frames and run_start > 0 and i < n:
+                        prev_val = smoothed[run_start - 1]
+                        next_val = smoothed[i]
+                        if (
+                            prev_val is not None
+                            and next_val is not None
+                            and prev_val[0] == next_val[0]
+                        ):
+                            for k in range(run_start, i):
+                                smoothed[k] = prev_val
+                else:
+                    i += 1
+
+        return smoothed
 
     def extract_intervals(
         self,
@@ -55,11 +123,9 @@ class PossessionIntervalExtractor:
         if not player_tracks:
             return []
 
-        raw_runs: list[dict[str, Any]] = []
-        current_run: dict[str, Any] | None = None
-
+        # Step 1: Extract raw frame-by-frame possessor: (player_id, team_id) or None
+        frame_assignments: list[tuple[int, int] | None] = []
         for frame_idx, frame_players in enumerate(player_tracks):
-            # Identify active player holding the ball in this frame
             possessor_id: int | None = None
             possessor_team: int | None = None
 
@@ -75,11 +141,27 @@ class PossessionIntervalExtractor:
                     break
 
             if possessor_id is not None:
+                frame_assignments.append(
+                    (possessor_id, possessor_team if possessor_team is not None else 1)
+                )
+            else:
+                frame_assignments.append(None)
+
+        # Step 2: Apply temporal smoothing if configured
+        smoothed_assignments = self._smooth_frame_assignments(frame_assignments)
+
+        # Step 3: Segment contiguous runs
+        raw_runs: list[dict[str, Any]] = []
+        current_run: dict[str, Any] | None = None
+
+        for frame_idx, assignment in enumerate(smoothed_assignments):
+            if assignment is not None:
+                possessor_id, possessor_team = assignment
                 if current_run is None:
                     # Start new possession segment
                     current_run = {
                         "player_id": possessor_id,
-                        "team_id": possessor_team if possessor_team is not None else 1,
+                        "team_id": possessor_team,
                         "start_frame": frame_idx,
                         "end_frame": frame_idx,
                     }
@@ -88,16 +170,17 @@ class PossessionIntervalExtractor:
                     current_run["end_frame"] = frame_idx
                 else:
                     # Possessor changed: close current run
-                    next_team = possessor_team if possessor_team is not None else 1
                     reason = (
-                        "pass" if current_run["team_id"] == next_team else "turnover"
+                        "pass"
+                        if current_run["team_id"] == possessor_team
+                        else "turnover"
                     )
                     current_run["termination_reason"] = reason
                     raw_runs.append(current_run)
 
                     current_run = {
                         "player_id": possessor_id,
-                        "team_id": next_team,
+                        "team_id": possessor_team,
                         "start_frame": frame_idx,
                         "end_frame": frame_idx,
                     }

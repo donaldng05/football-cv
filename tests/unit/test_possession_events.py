@@ -110,3 +110,66 @@ class TestPossessionIntervalExtractor:
         assert d["player_id"] == 7
         assert d["duration_seconds"] == 0.44
         assert d["termination_reason"] == "pass"
+
+    def test_extract_intervals_hysteresis_flicker_suppression(self):
+        # Sequence: Player 1 (4 frames) -> Player 2 blip (1 frame) -> Player 1 (5 frames)
+        player_tracks = [
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {2: {"has_ball": True, "team": 2}},  # 1 frame opponent blip in scrum
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+        ]
+
+        # Without hysteresis: produces fragmented intervals with false turnover
+        raw_extractor = PossessionIntervalExtractor(
+            minimum_control_frames=1, hysteresis_frames=0
+        )
+        raw_intervals = raw_extractor.extract_intervals(player_tracks)
+        assert len(raw_intervals) == 3
+        assert raw_intervals[0].player_id == 1
+        assert raw_intervals[1].player_id == 2
+        assert raw_intervals[2].player_id == 1
+
+        # With hysteresis (2 frames required to confirm change): blip is suppressed into single interval
+        stabilized_extractor = PossessionIntervalExtractor(
+            minimum_control_frames=1, hysteresis_frames=2
+        )
+        stabilized = stabilized_extractor.extract_intervals(player_tracks)
+        assert len(stabilized) == 1
+        assert stabilized[0].player_id == 1
+        assert stabilized[0].frame_count == 10
+
+    def test_extract_intervals_gap_bridging(self):
+        # Sequence: Player 1 (3 frames) -> ball undetected / missing (2 frames) -> Player 1 (4 frames)
+        player_tracks = [
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": False, "team": 1}},  # frame 3: dropout
+            {1: {"has_ball": False, "team": 1}},  # frame 4: dropout
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+            {1: {"has_ball": True, "team": 1}},
+        ]
+
+        # Without gap bridging: produces 2 fragmented intervals
+        raw_extractor = PossessionIntervalExtractor(
+            minimum_control_frames=1, max_gap_frames=0
+        )
+        assert len(raw_extractor.extract_intervals(player_tracks)) == 2
+
+        # With gap bridging (bridge gaps <= 2 frames): stabilized into 1 continuous interval
+        bridged_extractor = PossessionIntervalExtractor(
+            minimum_control_frames=1, max_gap_frames=2
+        )
+        intervals = bridged_extractor.extract_intervals(player_tracks)
+        assert len(intervals) == 1
+        assert intervals[0].player_id == 1
+        assert intervals[0].frame_count == 9
