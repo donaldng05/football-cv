@@ -263,6 +263,7 @@ ctest --test-dir cpp/build --output-on-failure
      ```python
      try:
          from football_cv import _core as native_core
+
          HAS_CPP_CORE = True
      except ImportError:
          native_core = None
