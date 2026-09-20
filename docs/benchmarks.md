@@ -69,3 +69,44 @@ Each benchmark execution outputs three standardized artifacts to `--output-dir`:
 ## 5. CI Automation
 
 Benchmarking is automated via GitHub Actions in `.github/workflows/benchmark.yml`, allowing on-demand profiling runs on hosted Linux runners or upon release tags.
+
+---
+
+## 6. Empirical Baseline Profile & Bottleneck Analysis
+
+* **Recorded:** 2026-09-20
+* **Commit:** `2aa1d75`
+* **Configuration:** [`configs/benchmark.yaml`](../configs/benchmark.yaml)
+* **Dataset:** `input_videos/08fd33_4.mp4` (1920x1080 @ 25 FPS, 100 frames profiled, 5 warmup frames discarded)
+* **Hardware:** Intel64 Family 6 Model 186 Stepping 2 (16 logical threads), 15.68 GB RAM, Windows 10
+* **Accelerator:** CPU only (`CUDA: False`), PyTorch 2.8.0+cpu, OpenCV 4.12.0
+* **Raw Artifacts:** [`benchmarks/baseline_results.json`](../benchmarks/baseline_results.json)
+
+### Stage Latency Breakdown
+
+| Stage | Subsystem | Latency (ms/frame) | % of Total Time | Engineering Bottleneck Tier |
+|---|---|---|---|---|
+| `detection_and_tracking` | YOLOv8 + ByteTrack | 62.63 ms | **60.91%** | Tier 1 (Primary ML Bottleneck) |
+| `camera_motion` | Lucas-Kanade Optical Flow | 14.85 ms | **14.44%** | Tier 2 (Primary Vision Bottleneck) |
+| `team_assignment` | K-Means jersey color clustering | 12.21 ms | **11.87%** | Tier 3 (Analytics Clustering) |
+| `rendering` | Overlay annotations & visualizer | 9.34 ms | **9.08%** | Tier 4 (Display/Drawing) |
+| `video_decoding` | OpenCV VideoCapture | 3.73 ms | **3.62%** | Tier 5 (I/O & Decoding) |
+| `perspective_transform` | 4-point pitch homography | 0.04 ms | **0.04%** | Low (< 0.1 ms) |
+| `possession_assignment` | Spatial player-ball distance | 0.02 ms | **0.02%** | Low (< 0.1 ms) |
+| `ball_interpolation` | Occlusion gap filling | 0.01 ms | **0.01%** | Low (< 0.1 ms) |
+| `speed_distance` | Kinematic displacement | < 0.01 ms | **< 0.01%** | Low (< 0.1 ms) |
+| `analytics_inference` | Event builder & intervals | < 0.01 ms | **< 0.01%** | Low (< 0.1 ms) |
+| **Total Pipeline** | **End-to-End Execution** | **102.83 ms** | **100.0%** | **Throughput: 9.73 FPS** |
+
+### Where is the time actually going?
+
+1. **Model Inference & Tracking (60.91% of latency):**
+   YOLOv8 forward passes and ByteTrack bounding-box associations account for over 60% of total frame latency. This empirical finding confirms that purely rewriting post-processing in C++ will not yield dramatic end-to-end speedups on its own; tackling this tier requires model deployment via **ONNX Runtime C++** (Phase 6).
+2. **Optical Flow Camera Motion Estimation (14.44% of latency):**
+   Lucas-Kanade optical flow on perimeter pixels is the largest pure computer-vision component (14.85 ms/frame). Migrating this calculation to native C++ with OpenCV (Phase 2 Component C) targets the highest-latency vision algorithm in the pipeline.
+3. **Jersey Color Clustering (11.87% of latency):**
+   Scikit-learn K-Means clustering on cropped player jersey patches adds non-trivial per-frame overhead when tracking multiple players.
+4. **Drawing & Visual Overlays (9.08% of latency):**
+   Rendering bounding boxes, player speed badges, and possession indicators directly onto 1080p frames takes ~9.3 ms/frame.
+5. **Geometry, Homography & Analytics (< 0.1% of latency):**
+   Mathematical operations (Euclidean distance, bounding box centers, 4-point homography projection) execute in microseconds per frame. While migrating geometry to C++ (Phase 2 Component A & B) will not drastically shift end-to-end FPS, it provides the essential, testable foundation for typed C++ data structures (`Point2D`, `BoundingBox`, `PerspectiveTransformer`) and validates pybind11 interoperability without architectural complexity.
