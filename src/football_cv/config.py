@@ -198,6 +198,18 @@ class LoggingConfig:
 
 
 @dataclass
+class VisionConfig:
+    backend: str = "python"  # "python" | "cpp"
+
+    def validate(self) -> None:
+        valid_backends = {"python", "cpp"}
+        if self.backend.lower() not in valid_backends:
+            raise ConfigurationError(
+                f"Invalid vision backend '{self.backend}'. Must be one of {valid_backends}"
+            )
+
+
+@dataclass
 class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     video: VideoConfig = field(default_factory=VideoConfig)
@@ -206,6 +218,7 @@ class AppConfig:
     movement: MovementConfig = field(default_factory=MovementConfig)
     perspective: PerspectiveConfig = field(default_factory=PerspectiveConfig)
     analytics: AnalyticsConfig = field(default_factory=AnalyticsConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     def validate(self) -> None:
@@ -215,6 +228,7 @@ class AppConfig:
         self.movement.validate()
         self.perspective.validate()
         self.analytics.validate()
+        self.vision.validate()
         self.logging.validate()
 
     def to_dict(self) -> dict[str, Any]:

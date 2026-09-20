@@ -5,7 +5,7 @@ football_cv: Computer Vision & Advanced Football Analytics Pipeline.
 __version__ = "0.1.0"
 __author__ = "Quy Duong"
 
-from .config import AppConfig, load_config
+from .config import AppConfig, VisionConfig, load_config
 from .exceptions import (
     ConfigurationError,
     FootballCVError,
@@ -22,6 +22,7 @@ __all__ = [
     "ModelError",
     "ValidationError",
     "VideoProcessingError",
+    "VisionConfig",
     "load_config",
     "setup_logging",
 ]
