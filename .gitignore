@@ -11,6 +11,8 @@ __pycache__/
 *$py.class
 *.egg-info/
 build/
+**/build/
+**/build*/
 dist/
 .eggs/
 
@@ -19,6 +21,7 @@ dist/
 .idea/
 *.swp
 *.swo
+compile_commands.json
 
 # Code quality & testing
 .pytest_cache/
