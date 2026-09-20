@@ -15,10 +15,9 @@ from .analytics import (
     HeatmapGenerator,
     PassNetworkGenerator,
 )
-from .camera_motion.estimator import CameraMotionEstimator
 from .config import AppConfig
+from .core import get_camera_motion_estimator, get_perspective_transformer
 from .movement.speed_distance import SpeedDistanceEstimator
-from .perspective.transformer import PerspectiveTransformer
 from .possession.assigner import PlayerBallAssigner
 from .possession.events import PossessionInterval, PossessionIntervalExtractor
 from .possession.interpolation import BallInterpolator
@@ -36,6 +35,7 @@ class MatchPipeline:
 
     def __init__(self, config: AppConfig):
         self.config = config
+        logger.info(f"Initializing MatchPipeline (backend='{config.vision.backend}')")
 
         self.tracker = ObjectTracker(
             model_path=config.model.path,
@@ -43,10 +43,11 @@ class MatchPipeline:
             batch_size=config.model.batch_size,
             device=config.model.device,
         )
-        self.view_transformer = PerspectiveTransformer(
+        self.view_transformer = get_perspective_transformer(
             pixel_vertices=config.perspective.pixel_vertices,
             court_width=config.perspective.court_width,
             court_length=config.perspective.court_length,
+            backend=config.vision.backend,
         )
         self.ball_interpolator = BallInterpolator()
         self.speed_distance_estimator = SpeedDistanceEstimator(
@@ -106,7 +107,10 @@ class MatchPipeline:
         self.tracker.add_positions_to_tracks(tracks)
 
         # 2. Camera movement compensation
-        cam_estimator = CameraMotionEstimator(frames[0])
+        cam_estimator = get_camera_motion_estimator(
+            frames[0],
+            backend=self.config.vision.backend,
+        )
         cam_stub = self.config.tracking.camera_movement_cache_path
         camera_movement = cam_estimator.get_camera_movement(
             frames, read_from_stub=use_stubs, stub_path=cam_stub

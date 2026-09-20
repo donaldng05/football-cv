@@ -115,9 +115,12 @@ class BenchmarkRunner:
 
         # 2. Camera motion compensation
         with profiler.time_stage("camera_motion"):
-            from ..camera_motion.estimator import CameraMotionEstimator
+            from ..core import get_camera_motion_estimator
 
-            cam_estimator = CameraMotionEstimator(frames[0])
+            cam_estimator = get_camera_motion_estimator(
+                frames[0],
+                backend=pipeline.config.vision.backend,
+            )
             cam_stub = pipeline.config.tracking.camera_movement_cache_path
             camera_movement = cam_estimator.get_camera_movement(
                 frames, read_from_stub=use_stubs, stub_path=cam_stub
