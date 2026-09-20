@@ -1,0 +1,14 @@
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -Icpp/include
+    - -Icpp/build/_deps/googletest-src/googletest/include
+    - -Icpp/build/_deps/googletest-src/googlemock/include
+    - -Wno-unknown-pragmas
+    - -Wno-unused-variable
+
+Diagnostics:
+  ClangTidy:
+    Remove:
+      - misc-include-cleaner
+      - modernize-use-trailing-return-type
