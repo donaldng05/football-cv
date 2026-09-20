@@ -8,12 +8,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Export compile commands for tooling
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Suppress deprecation warnings from external subprojects
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+
 # Library definition
 add_library(football_cv_core STATIC
     src/geometry.cpp
     src/perspective.cpp
     src/camera_motion.cpp
 )
+
+set_target_properties(football_cv_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(football_cv_core
     PUBLIC
@@ -33,4 +38,70 @@ option(BUILD_TESTS "Build C++ unit test suite" ON)
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# pybind11 Python bindings
+option(BUILD_PYTHON_BINDINGS "Build Python native extension via pybind11" ON)
+if(BUILD_PYTHON_BINDINGS)
+    # Prefer project virtual environment Python if available
+    if(NOT DEFINED Python3_EXECUTABLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../.venv/Scripts/python.exe")
+        set(Python3_EXECUTABLE "${CMAKE_CURRENT_SOURCE_DIR}/../.venv/Scripts/python.exe" CACHE FILEPATH "Python interpreter" FORCE)
+    endif()
+
+    # Hint pybind11 cmake directory from active python environment
+    find_package(Python3 COMPONENTS Interpreter Development QUIET)
+    if(Python3_FOUND AND NOT pybind11_DIR)
+        execute_process(
+            COMMAND "${Python3_EXECUTABLE}" -m pybind11 --cmakedir
+            OUTPUT_VARIABLE _detected_pybind11_dir
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(_detected_pybind11_dir)
+            list(APPEND CMAKE_PREFIX_PATH "${_detected_pybind11_dir}")
+        endif()
+    endif()
+
+    # Tell pybind11 to use modern FindPython3
+    set(PYBIND11_FINDPYTHON ON)
+    find_package(pybind11 CONFIG QUIET)
+
+    if(NOT pybind11_FOUND)
+        message(STATUS "pybind11 not found locally; fetching via FetchContent...")
+        include(FetchContent)
+        FetchContent_Declare(
+            pybind11
+            GIT_REPOSITORY https://github.com/pybind/pybind11.git
+            GIT_TAG v2.13.6
+        )
+        FetchContent_MakeAvailable(pybind11)
+    endif()
+
+    if(pybind11_FOUND)
+        pybind11_add_module(_core MODULE
+            bindings/python_module.cpp
+        )
+
+        target_link_libraries(_core PRIVATE football_cv_core)
+        target_include_directories(_core PRIVATE
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+
+        if(MSVC)
+            target_compile_options(_core PRIVATE /W3 /permissive-)
+        else()
+            target_compile_options(_core PRIVATE -Wall -Wextra)
+        endif()
+
+        # Output compiled extension directly to src/football_cv/
+        set(PYTHON_EXT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/football_cv")
+        set_target_properties(_core PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${PYTHON_EXT_DIR}"
+            LIBRARY_OUTPUT_DIRECTORY_RELEASE "${PYTHON_EXT_DIR}"
+            LIBRARY_OUTPUT_DIRECTORY_DEBUG "${PYTHON_EXT_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY "${PYTHON_EXT_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${PYTHON_EXT_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG "${PYTHON_EXT_DIR}"
+        )
+    endif()
 endif()
