@@ -1,13 +1,27 @@
 CompileFlags:
+  CompilationDatabase: .
   Add:
     - -std=c++17
     - -Icpp/include
+    - -Iinclude
+    - -I.venv/Include
+    - -I.venv/Lib/site-packages/pybind11/include
+    - -Ibuild/_deps/pybind11-src/include
+    - -Ibuild/_deps/googletest-src/googletest/include
+    - -Ibuild/_deps/googletest-src/googlemock/include
     - -Icpp/build/_deps/googletest-src/googletest/include
     - -Icpp/build/_deps/googletest-src/googlemock/include
+    - -ID:/football-cv/cpp/include
+    - -ID:/football-cv/.venv/Include
+    - -ID:/football-cv/.venv/Lib/site-packages/pybind11/include
+    - -ID:/football-cv/build/_deps/pybind11-src/include
+    - -ID:/football-cv/build/_deps/googletest-src/googletest/include
+    - -ID:/football-cv/build/_deps/googletest-src/googlemock/include
     - -Wno-unknown-pragmas
     - -Wno-unused-variable
 
 Diagnostics:
+  UnusedIncludes: None
   ClangTidy:
     Remove:
       - misc-include-cleaner

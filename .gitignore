@@ -9,6 +9,8 @@ __pycache__/
 *.pyc
 *.py[cod]
 *$py.class
+*.so
+*.pyd
 *.egg-info/
 build/
 **/build/
