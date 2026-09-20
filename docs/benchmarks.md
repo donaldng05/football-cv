@@ -110,3 +110,28 @@ Benchmarking is automated via GitHub Actions in `.github/workflows/benchmark.yml
    Rendering bounding boxes, player speed badges, and possession indicators directly onto 1080p frames takes ~9.3 ms/frame.
 5. **Geometry, Homography & Analytics (< 0.1% of latency):**
    Mathematical operations (Euclidean distance, bounding box centers, 4-point homography projection) execute in microseconds per frame. While migrating geometry to C++ (Phase 2 Component A & B) will not drastically shift end-to-end FPS, it provides the essential, testable foundation for typed C++ data structures (`Point2D`, `BoundingBox`, `PerspectiveTransformer`) and validates pybind11 interoperability without architectural complexity.
+
+---
+
+## 7. Numerical Parity Validation (Phase 4)
+
+To guarantee that moving vision algorithms into C++ does not introduce subtle mathematical drift or tracking errors, the pipeline undergoes strict numerical parity testing against the pure-Python reference implementation.
+
+### Tolerance Specifications
+
+| Domain | Operation | Mathematical Tolerance | Notes |
+| :--- | :--- | :--- | :--- |
+| **Geometry** | BBox Dimensions & Areas | `atol = 1e-9` | Exact floating-point parity |
+| **Geometry** | Centers & Foot Positions | `atol = 1e-9` (float), exact `int()` | C++ preserves continuous sub-pixel precision; Python legacy truncated to `int()` |
+| **Geometry** | Euclidean & XY Distance | `atol = 1e-9` | IEEE 754 float64 parity |
+| **Homography** | 3x3 Transformation Matrix | `rtol = 1e-5, atol = 1e-5` | Analytic 8x8 linear solve vs OpenCV `cv::getPerspectiveTransform` |
+| **Projection** | Pitch Metric Coordinates | `atol = 1e-4` meters (0.1 mm) | Verified on 500-point grid inside calibrated pitch polygon |
+| **Containment** | Polygon Boundary Test | Exact boolean parity | C++ boundary segment cross-product matches `cv2.pointPolygonTest >= 0` |
+| **Optical Flow**| Synthetic Feature Shifts | `atol = 1e-9` | Exact displacement, sub-threshold filter, and scene cut detection |
+| **Optical Flow**| Real Match Video (50 frames)| `atol = 1e-5` | Verified frame-by-frame on `input_videos/08fd33_4.mp4` |
+| **Tracks Mutation**| Transformed / Adjusted Tracks | `atol = 1e-4` | Full multi-frame pipeline track dictionary parity |
+
+### Key Engineering Findings
+1. **Sub-Pixel Accuracy Retention**: Legacy Python implementations of `get_center_of_bbox` and `get_foot_position` truncated coordinates using `int()`, introducing up to 0.5 px quantization error. The C++ `football_cv_core` preserves continuous double-precision coordinates while maintaining exact integer compatibility.
+2. **Boundary Classification Parity**: Standard ray-casting algorithms can miss points lying exactly on vertices or collinear boundary segments. Adding segment cross-product and dot-product tests in C++ aligns boundary inclusion exactly with OpenCV's `pointPolygonTest >= 0`.
+3. **Optical Flow Stability**: Frame-by-frame camera motion translation vectors on 50 consecutive 1080p match video frames demonstrate zero numerical divergence between Python and native C++ backend estimators.
