@@ -79,3 +79,7 @@ filterwarnings = [
     "ignore::FutureWarning:supervision.*",
     "ignore::UserWarning:sklearn.*",
 ]
+markers = [
+    "parity: Numerical parity tests comparing Python and native C++ vision implementations",
+]
+

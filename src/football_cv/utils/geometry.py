@@ -58,3 +58,52 @@ def measure_distance(p1: Point2D, p2: Point2D) -> float:
 def measure_xy_distance(p1: Point2D, p2: Point2D) -> tuple[float, float]:
     """Calculate signed (dx, dy) displacement from p2 to p1."""
     return float(p1[0] - p2[0]), float(p1[1] - p2[1])
+
+
+def extract_centers(bboxes: Sequence[BBox]) -> list[tuple[int, int]]:
+    """Extract center points for a collection of bounding boxes."""
+    return [get_center_of_bbox(b) for b in bboxes]
+
+
+def extract_foot_positions(bboxes: Sequence[BBox]) -> list[tuple[int, int]]:
+    """Extract foot contact points for a collection of bounding boxes."""
+    return [get_foot_position(b) for b in bboxes]
+
+
+def filter_valid_bboxes(bboxes: Sequence[BBox]) -> list[BBox]:
+    """Filter out bounding boxes with non-finite coordinates or negative dimensions."""
+    import math
+
+    valid: list[BBox] = []
+    for b in bboxes:
+        if len(b) < 4:
+            continue
+        x1, y1, x2, y2 = b[:4]
+        if not (
+            math.isfinite(x1)
+            and math.isfinite(y1)
+            and math.isfinite(x2)
+            and math.isfinite(y2)
+        ):
+            continue
+        if x2 >= x1 and y2 >= y1:
+            valid.append(b)
+    return valid
+
+
+def find_nearest_point(
+    target: Point2D,
+    candidates: Sequence[Point2D],
+    max_distance: float = float("inf"),
+) -> int | None:
+    """Find the index of the nearest candidate point within max_distance."""
+    best_idx: int | None = None
+    min_dist = max_distance
+
+    for idx, cand in enumerate(candidates):
+        dist = measure_distance(target, cand)
+        if dist < min_dist:
+            min_dist = dist
+            best_idx = idx
+
+    return best_idx

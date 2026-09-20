@@ -111,9 +111,34 @@ bool PerspectiveTransformer::is_point_inside(const Point2D& pt) const noexcept {
         return false;
     }
 
+    constexpr double eps = 1e-5;
+    const size_t count = pixel_vertices_.size();
+
+    // Check if point is on any vertex or boundary edge (matches cv2.pointPolygonTest >= 0)
+    for (size_t i = 0, j = count - 1; i < count; j = i++) {
+        const double xi = pixel_vertices_[i].x;
+        const double yi = pixel_vertices_[i].y;
+        const double xj = pixel_vertices_[j].x;
+        const double yj = pixel_vertices_[j].y;
+
+        // Check if point matches vertex
+        if (std::abs(pt.x - xi) < eps && std::abs(pt.y - yi) < eps) {
+            return true;
+        }
+
+        // Check if point lies on segment between (xi, yi) and (xj, yj)
+        const double cross = (pt.y - yi) * (xj - xi) - (pt.x - xi) * (yj - yi);
+        if (std::abs(cross) < 1e-3) {
+            const double dot = (pt.x - xi) * (xj - xi) + (pt.y - yi) * (yj - yi);
+            const double len_sq = (xj - xi) * (xj - xi) + (yj - yi) * (yj - yi);
+            if (dot >= -eps && dot <= len_sq + eps) {
+                return true;
+            }
+        }
+    }
+
     // Ray-casting algorithm to test if point is inside calibrated 4-vertex polygon
     bool inside = false;
-    const size_t count = pixel_vertices_.size();
     for (size_t i = 0, j = count - 1; i < count; j = i++) {
         const double xi = pixel_vertices_[i].x;
         const double yi = pixel_vertices_[i].y;
