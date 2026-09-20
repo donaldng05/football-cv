@@ -51,6 +51,9 @@ analytics:
     enabled: true
     maximum_transition_frames: 20
 
+vision:
+  backend: "python"
+
 logging:
   level: "INFO"
   log_file: "outputs/logs/football-cv-high-acc.log"

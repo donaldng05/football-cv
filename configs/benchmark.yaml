@@ -51,6 +51,9 @@ analytics:
     enabled: false
     maximum_transition_frames: 15
 
+vision:
+  backend: "python"
+
 logging:
   level: "INFO"
   log_file: "outputs/logs/football-cv-benchmark.log"

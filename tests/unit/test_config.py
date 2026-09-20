@@ -24,6 +24,7 @@ class TestConfigLoading:
         assert config.possession.max_player_ball_distance == 70.0
         assert len(config.perspective.pixel_vertices) == 4
         assert config.analytics.enabled is True
+        assert config.vision.backend == "python"
 
     def test_load_fast_yaml_config(self):
         config = load_config("configs/fast.yaml")
@@ -31,12 +32,14 @@ class TestConfigLoading:
         assert config.video.end_frame == 50
         assert config.model.device == "cpu"
         assert config.logging.level == "DEBUG"
+        assert config.vision.backend == "python"
 
     def test_load_high_accuracy_yaml_config(self):
         config = load_config("configs/high_accuracy.yaml")
         assert config.model.confidence == 0.15
         assert config.model.device == "cuda"
         assert config.model.batch_size == 32
+        assert config.vision.backend == "python"
 
     def test_missing_config_file_raises_error(self):
         with pytest.raises(ConfigurationError, match="Configuration file not found"):
