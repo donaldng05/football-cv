@@ -47,7 +47,9 @@ yolov8x.pt
 /outputs/
 /reports/
 
-# Ephemeral benchmark run outputs (preserve frozen baseline artifacts)
+# Ephemeral benchmark run outputs (preserve frozen baseline, hybrid, and micro artifacts)
 /benchmarks/*
 !/benchmarks/README.md
 !/benchmarks/baseline_*.json
+!/benchmarks/hybrid_*.json
+!/benchmarks/micro_results.json

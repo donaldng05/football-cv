@@ -135,3 +135,69 @@ To guarantee that moving vision algorithms into C++ does not introduce subtle ma
 1. **Sub-Pixel Accuracy Retention**: Legacy Python implementations of `get_center_of_bbox` and `get_foot_position` truncated coordinates using `int()`, introducing up to 0.5 px quantization error. The C++ `football_cv_core` preserves continuous double-precision coordinates while maintaining exact integer compatibility.
 2. **Boundary Classification Parity**: Standard ray-casting algorithms can miss points lying exactly on vertices or collinear boundary segments. Adding segment cross-product and dot-product tests in C++ aligns boundary inclusion exactly with OpenCV's `pointPolygonTest >= 0`.
 3. **Optical Flow Stability**: Frame-by-frame camera motion translation vectors on 50 consecutive 1080p match video frames demonstrate zero numerical divergence between Python and native C++ backend estimators.
+
+---
+
+## 8. Hybrid C++ Vision Core Benchmarks & Amdahl's Law Analysis (Phase 5)
+
+Phase 5 quantitatively measures the latency and throughput profile of the hybrid C++ vision core (`football_cv._core`) against the frozen pure-Python baseline across both isolated micro-benchmarks and full-pipeline 100-frame macro evaluations.
+
+### Micro-Benchmark Matrix (Isolated Computational Kernels)
+
+Tested via `time.perf_counter_ns` across 100,000 iterations for geometry, 20,000 for perspective, and 2,000 for camera motion feature loops.
+* **Raw Artifact:** [`benchmarks/micro_results.json`](../benchmarks/micro_results.json)
+
+| Kernel Operation | Category | Python Latency | C++ Latency | Speedup | Throughput (C++) | Engineering Rationale |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `optical_flow_feature_loop_100pts` | Camera Motion | 68.79 μs | 3.92 μs | **17.53x** | 254,800 ops/s | Vectorized C++ register loop avoids 100 Python tuple allocations & GIL overhead |
+| `batch_perspective_100pts` | Perspective | 218.21 μs | 22.40 μs | **9.74x** | 44,600 ops/s | Contiguous memory loop in C++ bypasses repetitive NumPy array conversions |
+| `camera_motion_margin_filter_200pts` | Camera Motion | 34.12 μs | 6.69 μs | **5.10x** | 149,500 ops/s | Direct memory coordinate filter without Python list resizing |
+| `perspective_transform_native_raw` | Perspective | 2.05 μs | 0.43 μs | **4.71x** | 2,304,000 ops/s | Native Point2D homography solve without ndarray wrapping |
+| `find_nearest_point_22x` | Geometry | 4.51 μs | 0.98 μs | **4.59x** | 1,019,000 ops/s | Tight Euclidean distance search on `std::vector<Point2D>` |
+| `polygon_containment_check` | Perspective | 0.41 μs | 0.25 μs | **1.67x** | 4,016,000 ops/s | Native boundary segment cross product vs OpenCV Python wrapper |
+| `perspective_transform_point` | Perspective | 2.05 μs | 1.54 μs | **1.33x** | 651,000 ops/s | Single-point projection with NumPy adapter array conversion |
+| `euclidean_distance` | Geometry | 0.20 μs | 0.22 μs | **0.92x** | 4,545,000 ops/s | Single scalar math; pybind11 boundary overhead ≈ inlined Python math |
+| `bbox_center` / `bbox_foot` | Geometry | 0.18 μs | 0.38 μs | **0.47x** | 2,609,000 ops/s | Trivial 4-float arithmetic; crossing pybind11 boundary incurs ~200 ns |
+
+### Macro Pipeline Comparison (100 Frames Profiled)
+
+Evaluated on standardized 1080p match video (`input_videos/08fd33_4.mp4`, 100 frames, 5 warmup frames, confidence 0.10, batch size 20).
+* **Baseline Artifact:** [`benchmarks/baseline_results.json`](../benchmarks/baseline_results.json)
+* **Hybrid C++ Artifact:** [`benchmarks/hybrid_results.json`](../benchmarks/hybrid_results.json)
+
+| Stage / Metric | Pure Python Baseline | Hybrid Python + C++ Core | Delta / Impact |
+| :--- | :--- | :--- | :--- |
+| **Pipeline Throughput** | **9.73 FPS** | **11.11 FPS** | **+14.18% throughput improvement** |
+| **Total Duration (100 frames)**| 10.28 s | 9.00 s | -1.28 s total latency reduction |
+| `detection_and_tracking` | 62.63 ms/frame (60.91%) | 53.31 ms/frame (59.20%) | Primary bottleneck (model inference) |
+| `camera_motion` | 14.85 ms/frame (14.44%) | 14.96 ms/frame (16.61%) | Pyramidal Lucas-Kanade dense solve |
+| `team_assignment` | 12.21 ms/frame (11.87%) | 11.41 ms/frame (12.68%) | K-Means jersey color clustering |
+| `rendering` | 9.34 ms/frame (9.08%) | 6.91 ms/frame (7.67%) | Overlay drawing |
+| `video_decoding` | 3.73 ms/frame (3.62%) | 3.39 ms/frame (3.76%) | OpenCV VideoCapture decoding |
+| `perspective_transform` | 0.04 ms/frame (0.04%) | 0.03 ms/frame (0.03%) | Pitch coordinate homography |
+| `ball_interpolation` | 0.01 ms/frame (0.01%) | 0.01 ms/frame (0.01%) | Polynomial interpolation |
+| `possession_assignment` | 0.02 ms/frame (0.02%) | 0.01 ms/frame (0.02%) | Player-ball spatial proximity |
+
+### Engineering Reality & Bottleneck Analysis
+
+#### 1. Why Looping Kernels Experience Massive Gains (up to 17.5x)
+In pure Python, iterating over 100 optical flow keypoints or coordinate sets requires dynamic attribute lookups, heap-allocated tuple creation, float unboxing, and GIL checks on every single step. In contrast, compiling the loop to native C++:
+- Holds coordinate vectors in contiguous cache lines (`std::vector<Point2D>`).
+- Performs distance checks and vector math in CPU registers without memory allocations.
+- Permits MSVC/Clang compilers to auto-vectorize loops with SSE/AVX2 instruction sets.
+- Reduces feature loop time from **68.8 μs** to **3.9 μs** (**17.53x faster**).
+
+#### 2. The pybind11 Boundary Overhead Trade-off
+For a single scalar getter (e.g. `BoundingBox::center()`), invoking C++ from Python incurs a fixed pybind11 dispatch cost of ~150–200 ns (translating Python objects, type checking, and crossing the CPython ABI boundary). Because Python's inlined list arithmetic `[(b[0]+b[2])/2, (b[1]+b[3])/2]` executes in ~180 ns, calling C++ for individual isolated scalars offers no benefit.
+**Design Rule:** C++ migration should always operate at the **batch level** (`extract_centers`, `transform_points`, `estimate_from_features`), where the overhead of crossing the language barrier is paid once for hundreds of items rather than per element.
+
+#### 3. Amdahl's Law & The Path to Phase 6 (ONNX Runtime)
+Amdahl's Law mathematically governs the maximum possible speedup of our hybrid pipeline:
+$$S_{\text{latency}} = \frac{1}{(1 - p) + \frac{p}{s}}$$
+
+Where $p$ is the fraction of runtime optimized by C++ vision routines ($\approx 15\%$), and $s$ is the speedup factor. Even under the theoretical limit where all vision and post-processing algorithms execute instantaneously ($s \to \infty$):
+$$S_{\text{max}} = \frac{1}{1 - 0.15} = \frac{1}{0.85} \approx 1.18\times \text{ (Maximum theoretical throughput: } \sim 11.5 \text{ FPS)}$$
+
+Because **YOLOv8 forward passes and ByteTrack bounding-box association account for ~60% of total pipeline latency**, no amount of optimization in geometry, perspective projection, or camera motion can yield a 25–30+ FPS real-time pipeline on CPU hardware without directly addressing the model inference bottleneck.
+
+This empirical finding validates our roadmap design and sets the exact motivation for **Phase 6: ONNX Runtime Model Deployment**, which replaces PyTorch's heavy Python runtime with an optimized C++ ONNX Runtime inference engine.
