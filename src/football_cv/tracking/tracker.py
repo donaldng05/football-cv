@@ -22,12 +22,16 @@ class ObjectTracker:
         confidence: float = 0.10,
         batch_size: int = 20,
         device: str | None = None,
+        engine: str = "ultralytics",
+        nms_threshold: float = 0.50,
     ):
         self.detector = ObjectDetector(
             model_path=model_path,
             confidence=confidence,
             batch_size=batch_size,
             device=device,
+            engine=engine,
+            nms_threshold=nms_threshold,
         )
         self.tracker = sv.ByteTrack()
 
@@ -72,17 +76,28 @@ class ObjectTracker:
             "balls": [],
         }
 
-        for frame_num, detection in enumerate(detections):
-            cls_names = detection.names
-            cls_names_inv = {v: k for k, v in cls_names.items()}
+        cls_names = self.detector.names
+        cls_names_inv = {v: k for k, v in cls_names.items()}
+        player_cls_id = cls_names_inv.get("player", 2)
+        goalkeeper_cls_id = cls_names_inv.get("goalkeeper", 1)
+        referee_cls_id = cls_names_inv.get("referee", 3)
+        ball_cls_id = cls_names_inv.get("ball", 0)
 
-            # Convert to supervision format
-            detection_supervision = sv.Detections.from_ultralytics(detection)
+        for frame_num, detection in enumerate(detections):
+            # Support both sv.Detections (ONNX) and Ultralytics Results
+            if isinstance(detection, sv.Detections):
+                detection_supervision = detection
+            else:
+                detection_supervision = sv.Detections.from_ultralytics(detection)
 
             # Map goalkeeper class to player class so ByteTrack tracks them consistently
-            for object_ind, class_id in enumerate(detection_supervision.class_id):
-                if cls_names.get(class_id) == "goalkeeper":
-                    detection_supervision.class_id[object_ind] = cls_names_inv["player"]
+            if (
+                detection_supervision.class_id is not None
+                and len(detection_supervision.class_id) > 0
+            ):
+                for object_ind, class_id in enumerate(detection_supervision.class_id):
+                    if class_id == goalkeeper_cls_id:
+                        detection_supervision.class_id[object_ind] = player_cls_id
 
             # Update ByteTrack tracker
             detection_with_tracks = self.tracker.update_with_detections(
@@ -98,9 +113,9 @@ class ObjectTracker:
                 cls_id = frame_det[3]
                 track_id = int(frame_det[4])
 
-                if cls_id == cls_names_inv.get("player"):
+                if cls_id == player_cls_id:
                     tracks["players"][frame_num][track_id] = {"bbox": bbox}
-                elif cls_id == cls_names_inv.get("referee"):
+                elif cls_id == referee_cls_id:
                     tracks["referees"][frame_num][track_id] = {"bbox": bbox}
 
             # Extract ball detections directly from detector (ball is not passed through ByteTrack)
@@ -108,7 +123,7 @@ class ObjectTracker:
                 bbox = frame_det[0].tolist()
                 cls_id = frame_det[3]
 
-                if cls_id == cls_names_inv.get("ball"):
+                if cls_id == ball_cls_id:
                     tracks["balls"][frame_num][1] = {"bbox": bbox}
 
         if stub_path is not None:

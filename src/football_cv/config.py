@@ -17,6 +17,7 @@ class ModelConfig:
     confidence: float = 0.10
     device: str = "auto"
     batch_size: int = 20
+    engine: str = "ultralytics"  # "ultralytics" | "onnx"
 
     def validate(self) -> None:
         if not (0.0 <= self.confidence <= 1.0):
@@ -26,6 +27,11 @@ class ModelConfig:
         if self.batch_size < 1:
             raise ConfigurationError(
                 f"Model batch_size must be >= 1, got {self.batch_size}"
+            )
+        valid_engines = {"ultralytics", "onnx"}
+        if self.engine.lower() not in valid_engines:
+            raise ConfigurationError(
+                f"Invalid model engine '{self.engine}'. Must be one of {valid_engines}"
             )
 
 

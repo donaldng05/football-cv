@@ -62,6 +62,18 @@ struct BoundingBox {
     constexpr BoundingBox(double left, double top, double right, double bottom) noexcept
         : x1(left), y1(top), x2(right), y2(bottom) {}
 
+    bool operator==(const BoundingBox& other) const noexcept {
+        constexpr double epsilon = 1e-9;
+        return std::abs(x1 - other.x1) < epsilon &&
+               std::abs(y1 - other.y1) < epsilon &&
+               std::abs(x2 - other.x2) < epsilon &&
+               std::abs(y2 - other.y2) < epsilon;
+    }
+
+    bool operator!=(const BoundingBox& other) const noexcept {
+        return !(*this == other);
+    }
+
     /**
      * @brief Calculate the geometric center of the bounding box.
      */
@@ -132,6 +144,30 @@ struct CameraMotion {
     double dx{0.0};
     double dy{0.0};
     bool is_scene_cut{false};
+};
+
+/**
+ * @brief Represents an object detection with bounding box, confidence score, and class label.
+ */
+struct Detection {
+    BoundingBox bbox;
+    float confidence{0.0f};
+    int class_id{-1};
+
+    constexpr Detection() noexcept = default;
+    constexpr Detection(const BoundingBox& b, float conf, int cls) noexcept
+        : bbox(b), confidence(conf), class_id(cls) {}
+
+    bool operator==(const Detection& other) const noexcept {
+        constexpr float epsilon = 1e-5f;
+        return bbox == other.bbox &&
+               std::abs(confidence - other.confidence) < epsilon &&
+               class_id == other.class_id;
+    }
+
+    bool operator!=(const Detection& other) const noexcept {
+        return !(*this == other);
+    }
 };
 
 } // namespace football_cv

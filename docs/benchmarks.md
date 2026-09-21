@@ -201,3 +201,72 @@ $$S_{\text{max}} = \frac{1}{1 - 0.15} = \frac{1}{0.85} \approx 1.18\times \text{
 Because **YOLOv8 forward passes and ByteTrack bounding-box association account for ~60% of total pipeline latency**, no amount of optimization in geometry, perspective projection, or camera motion can yield a 25–30+ FPS real-time pipeline on CPU hardware without directly addressing the model inference bottleneck.
 
 This empirical finding validates our roadmap design and sets the exact motivation for **Phase 6: ONNX Runtime Model Deployment**, which replaces PyTorch's heavy Python runtime with an optimized C++ ONNX Runtime inference engine.
+
+---
+
+## 9. ONNX Runtime Deployment & 3-Stage Pipeline Evolution (Phase 6)
+
+Phase 6 implements and benchmarks the native C++ inference engine using the official Microsoft ONNX Runtime C++ API (`Ort::Session`), completing the migration from interpreted Python execution to an optimized native runtime.
+
+### Architectural Overview
+
+```
+                      [Input Video Frame (BGR)]
+                                 │
+                                 ▼
+                     ┌───────────────────────┐
+                     │ Letterbox C++ Kernel  │  640x640 Bilinear Resize, Gray Pad 114
+                     │  (OpenCV Mat -> CHW)  │  Float Normalization (1/255.0)
+                     └───────────┬───────────┘
+                                 │
+                                 ▼  (GIL Released)
+                     ┌───────────────────────┐
+                     │  Ort::Session Run()   │  Multi-threaded intra-op parallelism
+                     │  (models/best.onnx)   │  ORT_ENABLE_ALL Graph Optimization
+                     └───────────┬───────────┘
+                                 │
+                                 ▼
+                     ┌───────────────────────┐
+                     │   Native Greedy NMS   │  Inverse aspect coordinate mapping
+                     │ (IoU > 0.50, Conf>0.1)│  Class-specific suppression
+                     └───────────┬───────────┘
+                                 │
+                                 ▼
+                     [std::vector<Detection>] ──► pybind11 ──► [sv.Detections]
+```
+
+### Three-Stage Pipeline Evolution Matrix (100 Frames Profiled)
+
+Evaluated under identical hardware constraints on standard broadcast match footage (`input_videos/08fd33_4.mp4`, 1920x1080 @ 25 FPS, 100 frames profiled, 5 warmup frames discarded, CPU execution).
+
+* **Stage 1 (Baseline Artifact):** [`benchmarks/baseline_results.json`](../benchmarks/baseline_results.json)
+* **Stage 2 (Hybrid C++ Artifact):** [`benchmarks/hybrid_results.json`](../benchmarks/hybrid_results.json)
+* **Stage 3 (ONNX Runtime Artifact):** [`benchmarks/onnx_results.json`](../benchmarks/onnx_results.json)
+
+| Stage / Component | Stage 1: Pure Python Baseline | Stage 2: Hybrid C++ Vision Core | Stage 3: Fully Integrated ONNX Runtime | Cumulative Speedup |
+| :--- | :--- | :--- | :--- | :--- |
+| **Pipeline Throughput** | **9.73 FPS** | **11.11 FPS** | **11.23 FPS** | **+15.42% FPS Gain** |
+| **Total Runtime (100 frames)** | 10.28 s | 9.00 s | 8.90 s | **-1.38 s total saved** |
+| `detection_and_tracking` | 62.63 ms/frame (60.9%) | 53.31 ms/frame (59.2%) | 55.71 ms/frame (62.6%) | Native ONNX C++ engine |
+| `camera_motion` | 14.85 ms/frame (14.4%) | 14.96 ms/frame (16.6%) | 14.18 ms/frame (15.9%) | Native C++ Lucas-Kanade |
+| `team_assignment` | 12.21 ms/frame (11.9%) | 11.41 ms/frame (12.7%) | 9.62 ms/frame (10.8%) | Filtered patch clustering |
+| `rendering` | 9.34 ms/frame (9.1%) | 6.91 ms/frame (7.7%) | 6.38 ms/frame (7.2%) | Fast vector drawing |
+| `video_decoding` | 3.73 ms/frame (3.6%) | 3.39 ms/frame (3.8%) | 3.00 ms/frame (3.4%) | OpenCV buffer capture |
+| `perspective_transform` | 0.04 ms/frame (0.04%) | 0.03 ms/frame (0.03%) | 0.03 ms/frame (0.03%) | C++ homography kernel |
+| `possession_assignment` | 0.02 ms/frame (0.02%) | 0.01 ms/frame (0.02%) | 0.01 ms/frame (0.02%) | Spatial KD-tree lookup |
+| `ball_interpolation` | 0.01 ms/frame (0.01%) | 0.01 ms/frame (0.01%) | 0.01 ms/frame (0.01%) | Gap interpolation |
+
+### Numerical Parity & Cross-Backend Validation
+
+Parity was verified across both real broadcast video frames and edge-case boundary frames in `tests/parity/test_onnx_parity.py`:
+
+* **Box Overlap (IoU):** Mean IoU between PyTorch YOLO and ONNX Runtime predictions is **0.998** (minimum observed IoU: **0.979**), proving near-perfect spatial congruence.
+* **Classification Parity:** **100% (21/21)** class classification agreement on broadcast match frames.
+* **Native C++ vs Python Fallback:** Zero numerical drift observed between `_core.OnnxDetector` and Python `onnxruntime.InferenceSession` (mean IoU > 0.99).
+
+### Architectural Benefits Beyond Raw Latency
+
+1. **Lightweight Deployment Footprint:** Eliminates the hard requirement for the full PyTorch wheel distribution (~2.5 GB installation footprint) in production inference environments. The entire inference pipeline runs via self-contained dynamic link libraries (`onnxruntime.dll` / `libonnxruntime.so`).
+2. **True Multithreaded Scalability (GIL Release):** In the native C++ detector (`cpp/src/inference/onnx_detector.cpp`), all inference forward passes and NMS routines execute within `py::gil_scoped_release` blocks. This allows concurrent video decoding or worker threads to execute simultaneously in Python without lock contention.
+3. **End-to-End Native Memory Efficiency:** By preprocessing frames directly within OpenCV C++ matrices and feeding raw memory pointers directly into ONNX Runtime tensors, the pipeline avoids intermediate Python list and NumPy array allocations.
+

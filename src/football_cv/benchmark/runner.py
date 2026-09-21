@@ -31,6 +31,7 @@ class BenchmarkRunResult:
     device: str
     num_frames: int
     profile: ProfileSummary
+    engine: str = "ultralytics"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +42,7 @@ class BenchmarkRunResult:
             "batch_size": self.batch_size,
             "device": self.device,
             "num_frames": self.num_frames,
+            "engine": self.engine,
             "profile": self.profile.to_dict(),
         }
 
@@ -279,6 +281,7 @@ class BenchmarkRunner:
             device=config.model.device,
             num_frames=len(test_frames),
             profile=summary,
+            engine=config.model.engine,
         )
 
     def run_sweep(
@@ -322,6 +325,7 @@ class BenchmarkRunner:
                         confidence=conf,
                         device=config.model.device,
                         batch_size=config.model.batch_size,
+                        engine=config.model.engine,
                     ),
                     video=config.video,
                     tracking=config.tracking,

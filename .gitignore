@@ -11,12 +11,14 @@ __pycache__/
 *$py.class
 *.so
 *.pyd
+*.dll
 *.egg-info/
 build/
 **/build/
 **/build*/
 dist/
 .eggs/
+cpp/third_party/
 
 # IDE & Editor files
 .vscode/
@@ -52,4 +54,5 @@ yolov8x.pt
 !/benchmarks/README.md
 !/benchmarks/baseline_*.json
 !/benchmarks/hybrid_*.json
+!/benchmarks/onnx_*.json
 !/benchmarks/micro_results.json

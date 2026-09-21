@@ -91,6 +91,18 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument(
         "--export-dir", type=str, help="Directory to save structured data exports"
     )
+    analyze_parser.add_argument(
+        "--engine",
+        type=str,
+        choices=["ultralytics", "onnx"],
+        help="Inference engine backend ('ultralytics' or 'onnx')",
+    )
+    analyze_parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["python", "cpp"],
+        help="Vision computation backend ('python' or 'cpp')",
+    )
 
     # --------------------------------------------------------------------------
     # Subcommand: report
@@ -210,6 +222,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Vision backend implementation ('python' or 'cpp')",
     )
     benchmark_parser.add_argument(
+        "--engine",
+        type=str,
+        choices=["ultralytics", "onnx"],
+        default=None,
+        help="Inference engine backend ('ultralytics' or 'onnx')",
+    )
+    benchmark_parser.add_argument(
         "--micro",
         action="store_true",
         default=False,
@@ -251,6 +270,8 @@ def _extract_overrides(args: argparse.Namespace) -> dict:
         model_overrides["device"] = args.device
     if getattr(args, "batch_size", None) is not None:
         model_overrides["batch_size"] = args.batch_size
+    if getattr(args, "engine", None) is not None:
+        model_overrides["engine"] = args.engine
     if model_overrides:
         overrides["model"] = model_overrides
 
@@ -279,6 +300,12 @@ def _extract_overrides(args: argparse.Namespace) -> dict:
         analytics_overrides["export_dir"] = args.export_dir
     if analytics_overrides:
         overrides["analytics"] = analytics_overrides
+
+    vision_overrides = {}
+    if getattr(args, "backend", None) is not None:
+        vision_overrides["backend"] = args.backend
+    if vision_overrides:
+        overrides["vision"] = vision_overrides
 
     return overrides
 
@@ -463,6 +490,8 @@ def handle_benchmark(args: argparse.Namespace) -> int:
         overrides: dict[str, Any] = {}
         if getattr(args, "device", None):
             overrides.setdefault("model", {})["device"] = args.device
+        if getattr(args, "engine", None):
+            overrides.setdefault("model", {})["engine"] = args.engine
         if getattr(args, "backend", None):
             overrides.setdefault("vision", {})["backend"] = args.backend
         if getattr(args, "use_stubs", None) is not None:
