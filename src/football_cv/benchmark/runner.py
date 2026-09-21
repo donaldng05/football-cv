@@ -329,6 +329,7 @@ class BenchmarkRunner:
                     movement=config.movement,
                     perspective=config.perspective,
                     analytics=config.analytics,
+                    vision=config.vision,
                     logging=config.logging,
                 )
                 cfg.validate()
