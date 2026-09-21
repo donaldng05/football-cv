@@ -26,6 +26,41 @@ target_include_directories(football_cv_core
         $<INSTALL_INTERFACE:include>
 )
 
+# ------------------------------------------------------------------------------
+# ONNX Runtime Integration
+# ------------------------------------------------------------------------------
+option(ENABLE_ONNXRUNTIME "Enable ONNX Runtime C++ inference backend" ON)
+if(ENABLE_ONNXRUNTIME)
+    set(ORT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/onnxruntime-win-x64-1.20.1")
+    if(NOT EXISTS "${ORT_ROOT}")
+        message(STATUS "ONNX Runtime not found in third_party; fetching...")
+        include(FetchContent)
+        FetchContent_Declare(
+            onnxruntime_prebuilt
+            URL https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-win-x64-1.20.1.zip
+        )
+        FetchContent_MakeAvailable(onnxruntime_prebuilt)
+        set(ORT_ROOT "${onnxruntime_prebuilt_SOURCE_DIR}")
+    endif()
+
+    if(EXISTS "${ORT_ROOT}/include")
+        message(STATUS "Configuring ONNX Runtime from: ${ORT_ROOT}")
+        target_include_directories(football_cv_core PUBLIC "${ORT_ROOT}/include")
+        if(MSVC)
+            target_link_libraries(football_cv_core PUBLIC "${ORT_ROOT}/lib/onnxruntime.lib")
+            set(ORT_DLL "${ORT_ROOT}/lib/onnxruntime.dll" CACHE INTERNAL "ONNX Runtime DLL path")
+        else()
+            target_link_libraries(football_cv_core PUBLIC "${ORT_ROOT}/lib/libonnxruntime.so")
+            set(ORT_DLL "${ORT_ROOT}/lib/libonnxruntime.so" CACHE INTERNAL "ONNX Runtime shared lib path")
+        endif()
+
+        target_sources(football_cv_core PRIVATE src/inference/onnx_detector.cpp)
+        target_compile_definitions(football_cv_core PUBLIC FOOTBALL_CV_HAS_ONNX=1)
+    else()
+        message(WARNING "ONNX Runtime headers not found at ${ORT_ROOT}/include; building without ONNX support.")
+    endif()
+endif()
+
 # Compiler warnings
 if(MSVC)
     target_compile_options(football_cv_core PRIVATE /W4 /permissive-)
@@ -103,5 +138,15 @@ if(BUILD_PYTHON_BINDINGS)
             RUNTIME_OUTPUT_DIRECTORY_RELEASE "${PYTHON_EXT_DIR}"
             RUNTIME_OUTPUT_DIRECTORY_DEBUG "${PYTHON_EXT_DIR}"
         )
+
+        # Copy onnxruntime.dll alongside _core native extension
+        if(ORT_DLL AND EXISTS "${ORT_DLL}")
+            add_custom_command(TARGET _core POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ORT_DLL}"
+                    "${PYTHON_EXT_DIR}"
+                COMMENT "Copying onnxruntime.dll to ${PYTHON_EXT_DIR}"
+            )
+        endif()
     endif()
 endif()
