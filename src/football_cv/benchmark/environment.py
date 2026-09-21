@@ -100,6 +100,22 @@ class EnvironmentCollector:
         except Exception:
             pass
 
+        # ONNX & ONNX Runtime version
+        onnx_ver = "unknown"
+        ort_ver = "unknown"
+        try:
+            import onnx
+
+            onnx_ver = onnx.__version__
+        except Exception:
+            pass
+        try:
+            import onnxruntime
+
+            ort_ver = onnxruntime.__version__
+        except Exception:
+            pass
+
         commit_sha, branch_name = cls.get_git_info()
 
         manifest: dict[str, Any] = {
@@ -134,6 +150,8 @@ class EnvironmentCollector:
                 "torch": torch_ver,
                 "opencv": cv_ver,
                 "ultralytics": ultra_ver,
+                "onnx": onnx_ver,
+                "onnxruntime": ort_ver,
             },
         }
 

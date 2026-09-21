@@ -309,28 +309,23 @@ ctest --test-dir cpp/build --output-on-failure
 
 ---
 
-### Phase 6: ONNX Runtime Model Deployment (Stretch Milestone)
+### Phase 6: ONNX Runtime Model Deployment [COMPLETED]
 *Goal: Address the primary pipeline bottleneck (model inference) with an abstract C++ inference engine.*
 
 1. **Export YOLO to ONNX:**
    - Script: `scripts/export_yolo_onnx.py`.
-   - Validate ONNX graph integrity with `onnx.checker.check_model`.
+   - Validated model topology with `onnx.checker.check_model` (input `[1, 3, 640, 640]`, output `[1, 8, 8400]`).
 2. **Abstract Detector Architecture:**
-   ```cpp
-   namespace football_cv {
-   class Detector {
-   public:
-       virtual ~Detector() = default;
-       virtual std::vector<Detection> detect(const cv::Mat& frame) = 0;
-   };
-   }
-   ```
-3. **ONNX Runtime C++ Detector:**
-   - Header: `cpp/include/football_cv/inference/onnx_detector.hpp`.
-   - Source: `cpp/src/inference/onnx_detector.cpp`.
-   - Implement Letterbox preprocessing, tensor allocation, Ort::Session execution, Non-Maximum Suppression (NMS), and coordinate scaling.
-4. **Benchmarking Inference:**
-   - Compare PyTorch CUDA/CPU vs ONNX Runtime CPU vs ONNX Runtime TensorRT/DirectML.
+   - Base interface: `cpp/include/football_cv/inference/detector.hpp` (`Detector` abstract base class).
+   - Concrete class: `cpp/include/football_cv/inference/onnx_detector.hpp` (`OnnxDetector`).
+   - Implementation: `cpp/src/inference/onnx_detector.cpp` featuring bilinear Letterbox preprocessing, multi-threaded `Ort::Session` inference, and native greedy Non-Maximum Suppression (NMS).
+3. **Python Bindings & Fallback Engine:**
+   - Exposed `Detection` and `OnnxDetector` via pybind11 in `cpp/bindings/python_module.cpp` with scoped GIL release.
+   - Updated `ObjectDetector` (`src/football_cv/tracking/detector.py`) and `ObjectTracker` to support dual backends (`engine: "ultralytics" | "onnx"`).
+4. **Numerical Parity & Benchmarking:**
+   - Verified high-precision numerical parity in `tests/parity/test_onnx_parity.py` (mean IoU 0.998, 100% class classification agreement).
+   - Profiled 100-frame macro pipeline, capturing `benchmarks/onnx_results.json` and `benchmarks/onnx_environment.json`.
+   - Documented complete 3-stage performance evolution in `docs/benchmarks.md` Section 9.
 
 ---
 
