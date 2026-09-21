@@ -4,6 +4,7 @@
 
 #include "football_cv/camera_motion.hpp"
 #include "football_cv/geometry.hpp"
+#include "football_cv/inference/onnx_detector.hpp"
 #include "football_cv/perspective.hpp"
 #include "football_cv/types.hpp"
 
@@ -314,4 +315,88 @@ PYBIND11_MODULE(_core, m) {
                     "Accumulate cumulative camera displacement across a sequence of frames.")
         .def_property_readonly("minimum_distance", &CameraMotionEstimator::minimum_distance)
         .def_property_readonly("scene_cut_threshold", &CameraMotionEstimator::scene_cut_threshold);
+
+    // ------------------------------------------------------------------------
+    // Detection
+    // ------------------------------------------------------------------------
+    py::class_<Detection>(m, "Detection", "Object detection result with bounding box, confidence, and class ID.")
+        .def(py::init<BoundingBox, float, int>(),
+             py::arg("bbox"), py::arg("confidence"), py::arg("class_id"))
+        .def_readwrite("bbox", &Detection::bbox)
+        .def_readwrite("confidence", &Detection::confidence)
+        .def_readwrite("class_id", &Detection::class_id)
+        .def("__repr__", [](const Detection& d) {
+            std::ostringstream oss;
+            oss << "Detection(bbox=BoundingBox("
+                << d.bbox.x1 << ", " << d.bbox.y1 << ", "
+                << d.bbox.x2 << ", " << d.bbox.y2 << "), conf="
+                << d.confidence << ", class_id=" << d.class_id << ")";
+            return oss.str();
+        })
+        .def("__eq__", &Detection::operator==);
+
+#ifdef FOOTBALL_CV_HAS_ONNX
+    // ------------------------------------------------------------------------
+    // OnnxDetector
+    // ------------------------------------------------------------------------
+    py::class_<OnnxDetector>(m, "OnnxDetector", "C++ ONNX Runtime YOLOv8 detector with native NMS.")
+        .def(py::init<const std::string&, int>(),
+             py::arg("model_path"),
+             py::arg("num_threads") = 0)
+        .def("detect", [](OnnxDetector& self,
+                          py::array_t<uint8_t, py::array::c_style | py::array::forcecast> image,
+                          float confidence_threshold,
+                          float nms_threshold) {
+            auto info = image.request();
+            if (info.ndim != 3 || info.shape[2] != 3) {
+                throw std::invalid_argument("Expected 3D BGR image array with shape (H, W, 3)");
+            }
+            int height = static_cast<int>(info.shape[0]);
+            int width = static_cast<int>(info.shape[1]);
+            const uint8_t* ptr = static_cast<const uint8_t*>(info.ptr);
+
+            py::gil_scoped_release release;
+            return self.detect(ptr, width, height, confidence_threshold, nms_threshold);
+        }, py::arg("frame"), py::arg("confidence_threshold") = 0.10f, py::arg("nms_threshold") = 0.50f,
+           "Run object detection on a BGR NumPy array (H, W, 3).")
+        .def("detect_batch", [](OnnxDetector& self,
+                                py::sequence frames,
+                                float confidence_threshold,
+                                float nms_threshold) {
+            std::vector<py::array_t<uint8_t, py::array::c_style | py::array::forcecast>> arrays;
+            std::vector<const uint8_t*> ptrs;
+            arrays.reserve(frames.size());
+            ptrs.reserve(frames.size());
+
+            int width = -1;
+            int height = -1;
+
+            for (auto item : frames) {
+                auto arr = py::array_t<uint8_t, py::array::c_style | py::array::forcecast>::ensure(item);
+                if (!arr) {
+                    throw std::invalid_argument("All batch items must be NumPy image arrays");
+                }
+                auto info = arr.request();
+                if (info.ndim != 3 || info.shape[2] != 3) {
+                    throw std::invalid_argument("Batch image arrays must have shape (H, W, 3)");
+                }
+                if (width == -1) {
+                    height = static_cast<int>(info.shape[0]);
+                    width = static_cast<int>(info.shape[1]);
+                } else if (height != static_cast<int>(info.shape[0]) || width != static_cast<int>(info.shape[1])) {
+                    throw std::invalid_argument("All images in a batch must have identical dimensions");
+                }
+                arrays.push_back(arr);
+                ptrs.push_back(static_cast<const uint8_t*>(info.ptr));
+            }
+
+            py::gil_scoped_release release;
+            return self.detect_batch(ptrs, width, height, confidence_threshold, nms_threshold);
+        }, py::arg("frames"), py::arg("confidence_threshold") = 0.10f, py::arg("nms_threshold") = 0.50f,
+           "Run object detection on a batch of BGR NumPy arrays.")
+        .def_property_readonly("input_width", &OnnxDetector::input_width)
+        .def_property_readonly("input_height", &OnnxDetector::input_height)
+        .def_property_readonly("num_classes", &OnnxDetector::num_classes)
+        .def_property_readonly("model_path", &OnnxDetector::model_path);
+#endif
 }

@@ -42,6 +42,7 @@ class MatchPipeline:
             confidence=config.model.confidence,
             batch_size=config.model.batch_size,
             device=config.model.device,
+            engine=config.model.engine,
         )
         self.view_transformer = get_perspective_transformer(
             pixel_vertices=config.perspective.pixel_vertices,

@@ -8,6 +8,7 @@ model:
   confidence: 0.10
   device: "auto"
   batch_size: 20
+  engine: "ultralytics" # "ultralytics" | "onnx"
 
 video:
   input_path: "input_videos/08fd33_4.mp4"
