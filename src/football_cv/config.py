@@ -317,6 +317,7 @@ def load_config(
             pass_network=pass_net_cfg,
         )
 
+        vision_cfg = VisionConfig(**raw_data.get("vision", {}))
         logging_cfg = LoggingConfig(**raw_data.get("logging", {}))
 
         config = AppConfig(
@@ -327,6 +328,7 @@ def load_config(
             movement=movement_cfg,
             perspective=perspective_cfg,
             analytics=analytics_cfg,
+            vision=vision_cfg,
             logging=logging_cfg,
         )
         config.validate()

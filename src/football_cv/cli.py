@@ -202,6 +202,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Whether to use cached track stubs (default: from config)",
     )
+    benchmark_parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["python", "cpp"],
+        default=None,
+        help="Vision backend implementation ('python' or 'cpp')",
+    )
+    benchmark_parser.add_argument(
+        "--micro",
+        action="store_true",
+        default=False,
+        help="Run isolated micro-benchmarks on core mathematical and vision kernels",
+    )
 
     # --------------------------------------------------------------------------
     # Subcommand: error-analysis
@@ -424,22 +437,46 @@ def handle_report(args: argparse.Namespace) -> int:
 
 def handle_benchmark(args: argparse.Namespace) -> int:
     try:
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        if getattr(args, "micro", False):
+            from .benchmark.micro import (
+                format_micro_benchmark_table,
+                run_all_micro_benchmarks,
+                save_micro_benchmark_results,
+            )
+
+            print(
+                "[INFO] Executing micro-benchmarking suite across mathematical kernels..."
+            )
+            micro_report = run_all_micro_benchmarks()
+            print("\n" + format_micro_benchmark_table(micro_report) + "\n")
+            out_file = save_micro_benchmark_results(
+                micro_report, output_dir / "micro_results.json"
+            )
+            print(
+                f"[PASS] Micro-benchmark completed successfully. Saved to: {out_file}\n"
+            )
+            return 0
+
         overrides: dict[str, Any] = {}
         if getattr(args, "device", None):
             overrides.setdefault("model", {})["device"] = args.device
+        if getattr(args, "backend", None):
+            overrides.setdefault("vision", {})["backend"] = args.backend
         if getattr(args, "use_stubs", None) is not None:
             overrides.setdefault("tracking", {})["use_cached_tracks"] = args.use_stubs
 
         config = load_config(args.config, overrides=overrides if overrides else None)
         logger = setup_logging(level=config.logging.level)
-        logger.info(f"Benchmarking runner initialized ({args.num_frames} frames)")
+        logger.info(
+            f"Benchmarking runner initialized ({args.num_frames} frames, backend='{config.vision.backend}')"
+        )
 
         from .benchmark.environment import EnvironmentCollector
         from .benchmark.exporter import BenchmarkExporter
         from .benchmark.runner import BenchmarkRunner
-
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
 
         models_list = None
         if getattr(args, "models", None):

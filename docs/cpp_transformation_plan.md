@@ -287,22 +287,25 @@ ctest --test-dir cpp/build --output-on-failure
 
 ---
 
-### Phase 5: Empirical Benchmarking & Profiling
+### Phase 5: Empirical Benchmarking & Profiling [COMPLETED]
 *Goal: Produce quantitative comparisons and document the engineering reality.*
 
 1. **Side-by-Side Matrix:**
-   - Run benchmark on identical hardware:
-     - Pure Python
-     - Hybrid Python + C++ Core
-2. **Detailed Component Breakdown:**
-   | Component | Python Latency | C++ Latency | Speedup | Rationale |
+   - Evaluated on identical hardware (Intel64 16-thread CPU, Windows 10, 100 frames profiled, 5 warmup frames discarded):
+     - **Pure Python Baseline**: 10.28 s, 9.73 FPS (`benchmarks/baseline_results.json`)
+     - **Hybrid Python + C++ Core**: 9.00 s, 11.11 FPS (+14.18% throughput improvement) (`benchmarks/hybrid_results.json`)
+2. **Detailed Component Breakdown (`benchmarks/micro_results.json`):**
+   | Component / Kernel | Python Latency | C++ Latency | Speedup | Rationale |
    |---|---|---|---|---|
-   | Geometry / BBox Ops | X ms | Y ms | Zx | Avoids Python object overhead |
-   | Perspective Transform | X ms | Y ms | Zx | Comparison of py cv2 vs native C++ |
-   | Optical Flow Compensation | X ms | Y ms | Zx | Python cv2 wrapper vs C++ loop overhead |
-   | Pipeline Total FPS | X FPS | Y FPS | Z% | End-to-end impact assessment |
-3. **Engineering Analysis in `docs/benchmarks.md`:**
-   - Explain why certain operations improve dramatically while others show modest gains (e.g., OpenCV's Python bindings already call native C++ routines).
+   | Optical Flow Feature Loop (100 pts) | 68.79 μs | 3.92 μs | **17.53x** | C++ register loop avoids 100 Python tuple allocations & GIL overhead |
+   | Batch Perspective Transform (100 pts) | 218.21 μs | 22.40 μs | **9.74x** | Contiguous memory loop in C++ bypasses repetitive NumPy array conversions |
+   | Optical Flow Margin Filter (200 pts) | 34.12 μs | 6.69 μs | **5.10x** | Direct memory coordinate filter without Python list resizing |
+   | Raw Point Perspective Transform | 2.05 μs | 0.43 μs | **4.71x** | Native Point2D homography solve without ndarray wrapping |
+   | Nearest Neighbor Search (22 candidates) | 4.51 μs | 0.98 μs | **4.59x** | Tight Euclidean distance search on `std::vector<Point2D>` |
+   | Polygon Boundary Test | 0.41 μs | 0.25 μs | **1.67x** | Native boundary segment cross product vs OpenCV wrapper |
+   | Pipeline Total FPS | 9.73 FPS | 11.11 FPS | **+14.2%** | End-to-end impact assessment (constrained by YOLO/ByteTrack at 59.2%) |
+3. **Engineering Analysis in `docs/benchmarks.md` (Section 8):**
+   - Detailed documentation on GIL avoidance, looping kernel speedup, pybind11 boundary dispatch costs, and Amdahl's Law formalization motivating Phase 6 (ONNX Runtime).
 
 ---
 

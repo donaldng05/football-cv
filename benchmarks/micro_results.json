@@ -1,0 +1,178 @@
+{
+  "timestamp_utc": "2026-09-21T00:03:56.354154+00:00",
+  "scale": 1.0,
+  "environment": {
+    "timestamp_utc": "2026-09-21T00:03:55.114075+00:00",
+    "git": {
+      "commit": "8c6f086",
+      "branch": "feat/benchmarking"
+    },
+    "system": {
+      "os": "Windows",
+      "os_release": "10",
+      "platform": "Windows-10-10.0.26200-SP0",
+      "architecture": "AMD64"
+    },
+    "cpu": {
+      "model": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+      "physical_cores": 10,
+      "logical_cores": 16
+    },
+    "memory": {
+      "total_gb": 15.68,
+      "available_gb": 2.58
+    },
+    "accelerator": {
+      "cuda_available": false,
+      "cuda_version": null,
+      "gpu_count": 0,
+      "gpu_name": null
+    },
+    "packages": {
+      "python": "3.11.9",
+      "torch": "2.8.0+cpu",
+      "opencv": "4.12.0",
+      "ultralytics": "8.3.179"
+    }
+  },
+  "summary": {
+    "total_benchmarks": 12,
+    "mean_speedup": 4.01,
+    "max_speedup": 17.53,
+    "min_speedup": 0.45
+  },
+  "benchmarks": [
+    {
+      "name": "bbox_center",
+      "category": "Geometry",
+      "iterations": 100000,
+      "python_latency_us": 0.1817,
+      "cpp_latency_us": 0.3833,
+      "speedup": 0.47,
+      "python_throughput_ops": 5503032.2,
+      "cpp_throughput_ops": 2609072.3,
+      "description": "Bounding box center calculation ([x1,y1,x2,y2] -> Point2D)"
+    },
+    {
+      "name": "bbox_foot_position",
+      "category": "Geometry",
+      "iterations": 100000,
+      "python_latency_us": 0.1742,
+      "cpp_latency_us": 0.3871,
+      "speedup": 0.45,
+      "python_throughput_ops": 5741286.2,
+      "cpp_throughput_ops": 2583098.3,
+      "description": "Player foot position ([x1,y1,x2,y2] -> bottom-center Point2D)"
+    },
+    {
+      "name": "euclidean_distance",
+      "category": "Geometry",
+      "iterations": 100000,
+      "python_latency_us": 0.2021,
+      "cpp_latency_us": 0.2199,
+      "speedup": 0.92,
+      "python_throughput_ops": 4947384.6,
+      "cpp_throughput_ops": 4548100.7,
+      "description": "Euclidean distance between two 2D points"
+    },
+    {
+      "name": "batch_centers_25x",
+      "category": "Geometry",
+      "iterations": 10000,
+      "python_latency_us": 4.5828,
+      "cpp_latency_us": 5.4195,
+      "speedup": 0.85,
+      "python_throughput_ops": 218208.2,
+      "cpp_throughput_ops": 184518.9,
+      "description": "Batch center extraction across 25 tracking bboxes"
+    },
+    {
+      "name": "filter_valid_bboxes",
+      "category": "Geometry",
+      "iterations": 10000,
+      "python_latency_us": 3.9544,
+      "cpp_latency_us": 5.3796,
+      "speedup": 0.74,
+      "python_throughput_ops": 252882.2,
+      "cpp_throughput_ops": 185887.4,
+      "description": "Filter and validate 27 bounding boxes (positive area)"
+    },
+    {
+      "name": "find_nearest_point_22x",
+      "category": "Geometry",
+      "iterations": 10000,
+      "python_latency_us": 4.5052,
+      "cpp_latency_us": 0.9812,
+      "speedup": 4.59,
+      "python_throughput_ops": 221967.7,
+      "cpp_throughput_ops": 1019201.8,
+      "description": "Find nearest player coordinate among 22 candidates within radius"
+    },
+    {
+      "name": "perspective_transform_point",
+      "category": "Perspective",
+      "iterations": 20000,
+      "python_latency_us": 2.046,
+      "cpp_latency_us": 1.5357,
+      "speedup": 1.33,
+      "python_throughput_ops": 488766.9,
+      "cpp_throughput_ops": 651156.1,
+      "description": "Single-point projection from broadcast pixel to metric pitch (with adapter)"
+    },
+    {
+      "name": "perspective_transform_native_raw",
+      "category": "Perspective",
+      "iterations": 20000,
+      "python_latency_us": 2.046,
+      "cpp_latency_us": 0.4343,
+      "speedup": 4.71,
+      "python_throughput_ops": 488766.9,
+      "cpp_throughput_ops": 2302396.8,
+      "description": "Pure native transform_point(x, y) without NumPy array conversion"
+    },
+    {
+      "name": "polygon_containment_check",
+      "category": "Perspective",
+      "iterations": 20000,
+      "python_latency_us": 0.4144,
+      "cpp_latency_us": 0.2486,
+      "speedup": 1.67,
+      "python_throughput_ops": 2413273.0,
+      "cpp_throughput_ops": 4022445.2,
+      "description": "2D Point-in-polygon containment test for pitch boundaries"
+    },
+    {
+      "name": "batch_perspective_100pts",
+      "category": "Perspective",
+      "iterations": 2000,
+      "python_latency_us": 218.2063,
+      "cpp_latency_us": 22.4003,
+      "speedup": 9.74,
+      "python_throughput_ops": 4582.8,
+      "cpp_throughput_ops": 44642.2,
+      "description": "Batch perspective projection of 100 candidate points"
+    },
+    {
+      "name": "optical_flow_feature_loop_100pts",
+      "category": "Camera Motion",
+      "iterations": 2000,
+      "python_latency_us": 68.7884,
+      "cpp_latency_us": 3.9235,
+      "speedup": 17.53,
+      "python_throughput_ops": 14537.3,
+      "cpp_throughput_ops": 254874.5,
+      "description": "Feature loop over 100 optical flow points (max displacement, sub-threshold filtering, and scene cut detection)"
+    },
+    {
+      "name": "camera_motion_margin_filter_200pts",
+      "category": "Camera Motion",
+      "iterations": 2000,
+      "python_latency_us": 34.1169,
+      "cpp_latency_us": 6.6867,
+      "speedup": 5.1,
+      "python_throughput_ops": 29311.0,
+      "cpp_throughput_ops": 149550.6,
+      "description": "Exclusion filter isolating vertical border margins across 200 keypoints"
+    }
+  ]
+}

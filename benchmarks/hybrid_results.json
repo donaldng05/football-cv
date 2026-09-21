@@ -1,0 +1,116 @@
+{
+  "benchmark_id": "bench_20260921_000512",
+  "created_at": "2026-09-21T00:05:26.004625+00:00",
+  "environment": {
+    "timestamp_utc": "2026-09-21T00:05:12.571690+00:00",
+    "git": {
+      "commit": "8c6f086",
+      "branch": "feat/benchmarking"
+    },
+    "system": {
+      "os": "Windows",
+      "os_release": "10",
+      "platform": "Windows-10-10.0.26200-SP0",
+      "architecture": "AMD64"
+    },
+    "cpu": {
+      "model": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+      "physical_cores": 10,
+      "logical_cores": 16
+    },
+    "memory": {
+      "total_gb": 15.68,
+      "available_gb": 3.75
+    },
+    "accelerator": {
+      "cuda_available": false,
+      "cuda_version": null,
+      "gpu_count": 0,
+      "gpu_name": null
+    },
+    "packages": {
+      "python": "3.11.9",
+      "torch": "2.8.0+cpu",
+      "opencv": "4.12.0",
+      "ultralytics": "8.3.179"
+    }
+  },
+  "runs": [
+    {
+      "run_id": "eda92f7d",
+      "run_name": "best_conf_0.10",
+      "model_path": "models/best.pt",
+      "confidence": 0.1,
+      "batch_size": 20,
+      "device": "auto",
+      "num_frames": 100,
+      "profile": {
+        "num_frames": 100,
+        "total_duration_seconds": 9.0042,
+        "throughput_fps": 11.11,
+        "stages": {
+          "video_decoding": {
+            "stage_name": "video_decoding",
+            "total_seconds": 0.3389,
+            "ms_per_frame": 3.39,
+            "percent_of_total": 3.76
+          },
+          "detection_and_tracking": {
+            "stage_name": "detection_and_tracking",
+            "total_seconds": 5.3308,
+            "ms_per_frame": 53.31,
+            "percent_of_total": 59.2
+          },
+          "camera_motion": {
+            "stage_name": "camera_motion",
+            "total_seconds": 1.4957,
+            "ms_per_frame": 14.96,
+            "percent_of_total": 16.61
+          },
+          "perspective_transform": {
+            "stage_name": "perspective_transform",
+            "total_seconds": 0.0031,
+            "ms_per_frame": 0.03,
+            "percent_of_total": 0.03
+          },
+          "ball_interpolation": {
+            "stage_name": "ball_interpolation",
+            "total_seconds": 0.0013,
+            "ms_per_frame": 0.01,
+            "percent_of_total": 0.01
+          },
+          "speed_distance": {
+            "stage_name": "speed_distance",
+            "total_seconds": 0.0004,
+            "ms_per_frame": 0.0,
+            "percent_of_total": 0.0
+          },
+          "team_assignment": {
+            "stage_name": "team_assignment",
+            "total_seconds": 1.1414,
+            "ms_per_frame": 11.41,
+            "percent_of_total": 12.68
+          },
+          "possession_assignment": {
+            "stage_name": "possession_assignment",
+            "total_seconds": 0.0015,
+            "ms_per_frame": 0.01,
+            "percent_of_total": 0.02
+          },
+          "analytics_inference": {
+            "stage_name": "analytics_inference",
+            "total_seconds": 0.0001,
+            "ms_per_frame": 0.0,
+            "percent_of_total": 0.0
+          },
+          "rendering": {
+            "stage_name": "rendering",
+            "total_seconds": 0.691,
+            "ms_per_frame": 6.91,
+            "percent_of_total": 7.67
+          }
+        }
+      }
+    }
+  ]
+}
