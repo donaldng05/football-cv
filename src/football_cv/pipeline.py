@@ -24,7 +24,7 @@ from .possession.interpolation import BallInterpolator
 from .rendering.annotations import FrameAnnotator
 from .rendering.video_writer import AnnotatedVideoWriter
 from .teams.classifier import TeamClassifier
-from .tracking.tracker import ObjectTracker
+from .tracking import ObjectTracker, TrackSanitizer
 from .utils.video import read_video
 
 logger = logging.getLogger("football_cv.pipeline")
@@ -43,6 +43,13 @@ class MatchPipeline:
             batch_size=config.model.batch_size,
             device=config.model.device,
             engine=config.model.engine,
+            track_activation_threshold=config.tracking.track_activation_threshold,
+            lost_track_buffer=config.tracking.lost_track_buffer,
+            minimum_matching_threshold=config.tracking.minimum_matching_threshold,
+            frame_rate=int(config.video.frame_rate),
+            ball_max_displacement_pixels=config.tracking.ball_tracker_max_distance,
+            ball_min_confidence=config.tracking.ball_min_confidence,
+            enable_reid_sanitizer=config.tracking.enable_reid_sanitizer,
         )
         self.view_transformer = get_perspective_transformer(
             pixel_vertices=config.perspective.pixel_vertices,
@@ -114,7 +121,9 @@ class MatchPipeline:
 
         # 2. Ball position interpolation (interpolate missing ball detections before calculating spatial positions)
         tracks["balls"] = self.ball_interpolator.interpolate_ball_positions(
-            tracks["balls"], limit=self.config.possession.maximum_missing_ball_frames
+            tracks["balls"],
+            limit=self.config.possession.maximum_missing_ball_frames,
+            method=self.config.possession.ball_interpolation_method,
         )
 
         self.tracker.add_positions_to_tracks(tracks)
@@ -166,6 +175,9 @@ class MatchPipeline:
                     tracks["players"][frame_num][player_id]["team_color"] = (
                         self.team_classifier.team_colors.get(team, (0, 0, 255))
                     )
+
+            if self.config.tracking.enable_reid_sanitizer:
+                TrackSanitizer.sanitize_team_consistency(tracks["players"])
 
         # 7. Ball possession assignment (metric space proximity with pixel fallback)
         team_ball_control = []

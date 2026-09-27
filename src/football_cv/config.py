@@ -63,9 +63,28 @@ class TrackingConfig:
     use_cached_tracks: bool = True
     cache_path: str = "stubs/track_stubs.pkl"
     camera_movement_cache_path: str = "stubs/camera_movement_stubs.pkl"
+    track_activation_threshold: float = 0.25
+    lost_track_buffer: int = 60
+    minimum_matching_threshold: float = 0.70
+    ball_tracker_max_distance: float = 200.0
+    ball_min_confidence: float = 0.15
+    enable_reid_sanitizer: bool = True
 
     def validate(self) -> None:
-        pass
+        if not (0.0 < self.track_activation_threshold <= 1.0):
+            raise ConfigurationError(
+                f"track_activation_threshold must be in (0, 1], got {self.track_activation_threshold}"
+            )
+        if self.lost_track_buffer < 1:
+            raise ConfigurationError("lost_track_buffer must be >= 1")
+        if not (0.0 < self.minimum_matching_threshold <= 1.0):
+            raise ConfigurationError(
+                f"minimum_matching_threshold must be in (0, 1], got {self.minimum_matching_threshold}"
+            )
+        if self.ball_tracker_max_distance <= 0:
+            raise ConfigurationError("ball_tracker_max_distance must be positive")
+        if not (0.0 <= self.ball_min_confidence <= 1.0):
+            raise ConfigurationError("ball_min_confidence must be in [0, 1]")
 
 
 @dataclass
@@ -74,7 +93,8 @@ class PossessionConfig:
     max_player_ball_distance_meters: float = 2.0
     use_metric_distance: bool = True
     minimum_control_frames: int = 3
-    maximum_missing_ball_frames: int = 10
+    maximum_missing_ball_frames: int = 15
+    ball_interpolation_method: str = "linear"
 
     def validate(self) -> None:
         if self.max_player_ball_distance <= 0:
@@ -92,6 +112,11 @@ class PossessionConfig:
         if self.maximum_missing_ball_frames < 0:
             raise ConfigurationError(
                 f"maximum_missing_ball_frames must be >= 0, got {self.maximum_missing_ball_frames}"
+            )
+        valid_methods = {"linear", "quadratic"}
+        if self.ball_interpolation_method.lower() not in valid_methods:
+            raise ConfigurationError(
+                f"Invalid ball_interpolation_method '{self.ball_interpolation_method}'. Must be one of {valid_methods}"
             )
 
 
