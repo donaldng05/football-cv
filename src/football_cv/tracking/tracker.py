@@ -87,9 +87,34 @@ class ObjectTracker:
             with open(stub_path, "rb") as f:
                 return pickle.load(f)
 
+        tracks = self.track_chunk(frames)
+
+        # Apply spatiotemporal tracklet stitching if Re-ID sanitizer is enabled
+        if self.enable_reid_sanitizer:
+            TrackSanitizer.stitch_fragmented_tracks(tracks["players"])
+
+        if stub_path is not None:
+            stub_p = Path(stub_path)
+            stub_p.parent.mkdir(parents=True, exist_ok=True)
+            with open(stub_p, "wb") as f:
+                pickle.dump(tracks, f)
+
+        return tracks
+
+    def track_chunk(
+        self,
+        frames: list[np.ndarray],
+    ) -> dict[str, list[dict[int, Any]]]:
+        """
+        Detect and track objects across a single chunk of frames in streaming mode.
+        Continues internal ByteTrack and BallTracker state from previous chunks.
+        """
+        if not frames:
+            return {"players": [], "referees": [], "balls": []}
+
         detections = self.detector.detect_frames(frames)
 
-        tracks: dict[str, list[dict[int, Any]]] = {
+        chunk_tracks: dict[str, list[dict[int, Any]]] = {
             "players": [],
             "referees": [],
             "balls": [],
@@ -123,9 +148,9 @@ class ObjectTracker:
                 detection_supervision
             )
 
-            tracks["players"].append({})
-            tracks["referees"].append({})
-            tracks["balls"].append({})
+            chunk_tracks["players"].append({})
+            chunk_tracks["referees"].append({})
+            chunk_tracks["balls"].append({})
 
             for frame_det in detection_with_tracks:
                 bbox = frame_det[0].tolist()
@@ -133,9 +158,9 @@ class ObjectTracker:
                 track_id = int(frame_det[4])
 
                 if cls_id == player_cls_id:
-                    tracks["players"][frame_num][track_id] = {"bbox": bbox}
+                    chunk_tracks["players"][frame_num][track_id] = {"bbox": bbox}
                 elif cls_id == referee_cls_id:
-                    tracks["referees"][frame_num][track_id] = {"bbox": bbox}
+                    chunk_tracks["referees"][frame_num][track_id] = {"bbox": bbox}
 
             # Collect ball candidates with confidences and feed to kinematic BallTracker
             ball_candidates = []
@@ -153,19 +178,10 @@ class ObjectTracker:
 
             tracked_ball = self.ball_tracker.update(ball_candidates)
             if tracked_ball is not None:
-                tracks["balls"][frame_num][1] = tracked_ball
+                chunk_tracks["balls"][frame_num][1] = tracked_ball
 
-        # Apply spatiotemporal tracklet stitching if Re-ID sanitizer is enabled
-        if self.enable_reid_sanitizer:
-            TrackSanitizer.stitch_fragmented_tracks(tracks["players"])
-
-        if stub_path is not None:
-            stub_p = Path(stub_path)
-            stub_p.parent.mkdir(parents=True, exist_ok=True)
-            with open(stub_p, "wb") as f:
-                pickle.dump(tracks, f)
-
-        return tracks
+        self.add_positions_to_tracks(chunk_tracks)
+        return chunk_tracks
 
     def draw_annotations(
         self,

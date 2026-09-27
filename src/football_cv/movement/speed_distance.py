@@ -21,6 +21,74 @@ class SpeedDistanceEstimator:
         self.frame_rate = frame_rate if frame_rate > 0 else 25.0
         self.minimum_displacement = minimum_displacement
         self.method = method.lower()
+        self._player_history: dict[int, list[tuple[float, float]]] = {}
+        self._player_total_distance: dict[int, float] = {}
+        self._player_last_pos: dict[int, tuple[float, float]] = {}
+
+    def reset(self) -> None:
+        """Reset internal streaming kinematic state."""
+        self._player_history.clear()
+        self._player_total_distance.clear()
+        self._player_last_pos.clear()
+
+    def estimate_chunk(self, tracks: dict[str, Any]) -> None:
+        """
+        Estimate speed and cumulative distance for a chunk of frames in streaming mode.
+        Modifies entity dictionaries in tracks in-place.
+        """
+        for obj_name, object_tracks in tracks.items():
+            if obj_name in ("ball", "balls", "referee", "referees"):
+                continue
+
+            for frame_track in object_tracks:
+                for track_id, track_info in frame_track.items():
+                    pos = track_info.get("position_transformed")
+                    if pos is None:
+                        track_info["speed"] = 0.0
+                        track_info["distance_covered"] = float(
+                            self._player_total_distance.get(track_id, 0.0)
+                        )
+                        continue
+
+                    # 1. Monotonic incremental distance
+                    if track_id not in self._player_total_distance:
+                        self._player_total_distance[track_id] = 0.0
+
+                    if track_id in self._player_last_pos:
+                        step_dist = float(
+                            measure_distance(self._player_last_pos[track_id], pos)
+                        )
+                        if step_dist >= self.minimum_displacement:
+                            self._player_total_distance[track_id] += step_dist
+
+                    self._player_last_pos[track_id] = pos
+                    track_info["distance_covered"] = float(
+                        self._player_total_distance[track_id]
+                    )
+
+                    # 2. Rolling window speed
+                    if track_id not in self._player_history:
+                        self._player_history[track_id] = []
+
+                    self._player_history[track_id].append(pos)
+                    if len(self._player_history[track_id]) > self.frame_window:
+                        self._player_history[track_id].pop(0)
+
+                    history = self._player_history[track_id]
+                    if len(history) >= 2:
+                        window_dist = float(measure_distance(history[0], history[-1]))
+                        time_elapsed = (len(history) - 1) / self.frame_rate
+                        if (
+                            time_elapsed > 0
+                            and window_dist
+                            >= self.minimum_displacement * (len(history) - 1)
+                        ):
+                            speed_mps = window_dist / time_elapsed
+                            track_info["speed"] = float(speed_mps * 3.6)
+                        else:
+                            track_info["speed"] = 0.0
+                    else:
+                        track_info["speed"] = 0.0
 
     def _add_speed_distance_chunk(self, tracks: dict[str, Any]) -> None:
         """Legacy 5-frame batch calculation."""
