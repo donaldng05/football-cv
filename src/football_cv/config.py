@@ -64,6 +64,9 @@ class TrackingConfig:
     cache_path: str = "stubs/track_stubs.pkl"
     camera_movement_cache_path: str = "stubs/camera_movement_stubs.pkl"
 
+    def validate(self) -> None:
+        pass
+
 
 @dataclass
 class PossessionConfig:
@@ -103,6 +106,27 @@ class MovementConfig:
 
 
 @dataclass
+class CameraMotionConfig:
+    minimum_distance: float = 5.0
+    scene_cut_threshold: float = 80.0
+    margin_ratio_x: float = 0.05
+    margin_ratio_y: float = 0.10
+    use_dynamic_margins: bool = True
+
+    def validate(self) -> None:
+        if self.minimum_distance < 0:
+            raise ConfigurationError("minimum_distance must be >= 0")
+        if self.scene_cut_threshold <= self.minimum_distance:
+            raise ConfigurationError(
+                "scene_cut_threshold must be greater than minimum_distance"
+            )
+        if not (0.0 < self.margin_ratio_x < 0.5):
+            raise ConfigurationError("margin_ratio_x must be between 0.0 and 0.5")
+        if not (0.0 < self.margin_ratio_y < 0.5):
+            raise ConfigurationError("margin_ratio_y must be between 0.0 and 0.5")
+
+
+@dataclass
 class PerspectiveConfig:
     pixel_vertices: list[list[float]] = field(
         default_factory=lambda: [
@@ -114,6 +138,7 @@ class PerspectiveConfig:
     )
     court_width: float = 68.0
     court_length: float = 23.32
+    out_of_bounds_policy: str = "strict"
 
     def validate(self) -> None:
         if len(self.pixel_vertices) != 4:
@@ -127,6 +152,11 @@ class PerspectiveConfig:
                 )
         if self.court_width <= 0 or self.court_length <= 0:
             raise ConfigurationError("court_width and court_length must be positive")
+        valid_policies = {"strict", "clip", "extrapolate"}
+        if self.out_of_bounds_policy.lower() not in valid_policies:
+            raise ConfigurationError(
+                f"Invalid out_of_bounds_policy '{self.out_of_bounds_policy}'. Must be one of {valid_policies}"
+            )
 
 
 @dataclass
@@ -220,6 +250,7 @@ class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     video: VideoConfig = field(default_factory=VideoConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
+    camera_motion: CameraMotionConfig = field(default_factory=CameraMotionConfig)
     possession: PossessionConfig = field(default_factory=PossessionConfig)
     movement: MovementConfig = field(default_factory=MovementConfig)
     perspective: PerspectiveConfig = field(default_factory=PerspectiveConfig)
@@ -230,6 +261,8 @@ class AppConfig:
     def validate(self) -> None:
         self.model.validate()
         self.video.validate()
+        self.tracking.validate()
+        self.camera_motion.validate()
         self.possession.validate()
         self.movement.validate()
         self.perspective.validate()
@@ -302,6 +335,7 @@ def load_config(
         model_cfg = ModelConfig(**raw_data.get("model", {}))
         video_cfg = VideoConfig(**raw_data.get("video", {}))
         tracking_cfg = TrackingConfig(**raw_data.get("tracking", {}))
+        camera_motion_cfg = CameraMotionConfig(**raw_data.get("camera_motion", {}))
         possession_cfg = PossessionConfig(**raw_data.get("possession", {}))
         movement_cfg = MovementConfig(**raw_data.get("movement", {}))
 
@@ -330,6 +364,7 @@ def load_config(
             model=model_cfg,
             video=video_cfg,
             tracking=tracking_cfg,
+            camera_motion=camera_motion_cfg,
             possession=possession_cfg,
             movement=movement_cfg,
             perspective=perspective_cfg,
