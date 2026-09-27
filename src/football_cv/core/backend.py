@@ -89,6 +89,7 @@ class CppPerspectiveTransformerAdapter:
         pixel_vertices: Sequence[Sequence[float]] | None = None,
         court_width: float = 68.0,
         court_length: float = 23.32,
+        out_of_bounds_policy: str = "strict",
     ):
         if native_core is None:
             raise RuntimeError("Native C++ vision core is not available")
@@ -97,21 +98,38 @@ class CppPerspectiveTransformerAdapter:
         )
         self.court_width = court_width
         self.court_length = court_length
+        self.out_of_bounds_policy = out_of_bounds_policy.lower()
         self.pixel_vertices = np.array(
             [[pt.x, pt.y] for pt in self.core.pixel_vertices], dtype=np.float32
         )
         self.perspective_transformer = self.core.homography_matrix
 
-    def transform_point(self, point: Sequence[float] | np.ndarray) -> np.ndarray | None:
+    def transform_point(
+        self,
+        point: Sequence[float] | np.ndarray,
+        out_of_bounds_policy: str | None = None,
+    ) -> np.ndarray | None:
         """
         Transform a 2D point from broadcast pixel coordinates to metric pitch coordinates.
 
-        Returns None if the point lies outside the calibrated pitch boundary polygon.
+        Returns None if the point lies outside the calibrated pitch boundary polygon in strict mode.
         """
-        pt = self.core.transform_point(point)
+        policy = (out_of_bounds_policy or self.out_of_bounds_policy).lower()
+        if policy == "strict":
+            pt = self.core.transform_point(point, True)
+            if pt is None:
+                return None
+            return np.array([[pt.x, pt.y]], dtype=np.float32)
+
+        # In non-strict mode (clip or extrapolate):
+        pt = self.core.transform_point(point, False)
         if pt is None:
             return None
-        return np.array([[pt.x, pt.y]], dtype=np.float32)
+        tx, ty = pt.x, pt.y
+        if policy == "clip":
+            tx = float(np.clip(tx, 0.0, self.court_width))
+            ty = float(np.clip(ty, 0.0, self.court_length))
+        return np.array([[tx, ty]], dtype=np.float32)
 
     def add_transformed_position_to_tracks(self, tracks: dict[str, Any]) -> None:
         """Apply perspective transformation to object positions in tracks."""
@@ -140,6 +158,9 @@ class CppCameraMotionEstimatorAdapter:
         first_frame: np.ndarray,
         minimum_distance: float = 5.0,
         scene_cut_threshold: float = 80.0,
+        margin_ratio_x: float = 0.05,
+        margin_ratio_y: float = 0.10,
+        use_dynamic_margins: bool = True,
     ):
         if native_core is None:
             raise RuntimeError("Native C++ vision core is not available")
@@ -150,6 +171,9 @@ class CppCameraMotionEstimatorAdapter:
         )
         self.minimum_distance = minimum_distance
         self.scene_cut_threshold = scene_cut_threshold
+        self.margin_ratio_x = margin_ratio_x
+        self.margin_ratio_y = margin_ratio_y
+        self.use_dynamic_margins = use_dynamic_margins
 
         self.lk_params = dict(
             winSize=(15, 15),
@@ -158,10 +182,18 @@ class CppCameraMotionEstimatorAdapter:
         )
 
         first_gray = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
+        h, w = first_gray.shape[:2]
         mask_features = np.zeros_like(first_gray)
-        # Mask features: isolate vertical borders to exclude players running on the pitch
-        mask_features[:, 0:20] = 1
-        mask_features[:, 900:1050] = 1
+        if use_dynamic_margins and w > 100:
+            left_w = max(20, int(w * margin_ratio_x))
+            right_w = max(20, int(w * margin_ratio_x))
+            top_h = max(20, int(h * margin_ratio_y))
+            mask_features[:, :left_w] = 1
+            mask_features[:, w - right_w :] = 1
+            mask_features[:top_h, :] = 1
+        else:
+            mask_features[:, 0:20] = 1
+            mask_features[:, 900:1050] = 1
 
         self.features = dict(
             maxCorners=100,
@@ -171,15 +203,51 @@ class CppCameraMotionEstimatorAdapter:
             mask=mask_features,
         )
 
+    @staticmethod
+    def accumulate_motion(
+        motion_steps: Sequence[Any],
+    ) -> list[tuple[float, float]]:
+        """Accumulate frame-to-frame camera displacements into cumulative translation relative to frame 0."""
+        cumulative: list[tuple[float, float]] = []
+        total_dx = 0.0
+        total_dy = 0.0
+        for step in motion_steps:
+            if hasattr(step, "dx") and hasattr(step, "dy"):
+                dx, dy = float(step.dx), float(step.dy)
+                is_cut = getattr(step, "is_scene_cut", False)
+            elif isinstance(step, (list, tuple)):
+                dx, dy = float(step[0]), float(step[1])
+                is_cut = False
+            else:
+                dx, dy = 0.0, 0.0
+                is_cut = False
+
+            if is_cut:
+                total_dx = 0.0
+                total_dy = 0.0
+            else:
+                total_dx += dx
+                total_dy += dy
+            cumulative.append((total_dx, total_dy))
+        return cumulative
+
     def add_adjust_positions_to_tracks(
         self,
         tracks: dict[str, Any],
         camera_movement_per_frame: list[list[float] | tuple[float, float]],
+        cumulative: bool = False,
     ) -> None:
         """Adjust object positions to compensate for camera motion."""
+        movements = (
+            self.accumulate_motion(camera_movement_per_frame)
+            if cumulative
+            else camera_movement_per_frame
+        )
         for obj_name, object_tracks in tracks.items():
             for frame_num, track in enumerate(object_tracks):
-                cam_movement = camera_movement_per_frame[frame_num]
+                if frame_num >= len(movements):
+                    continue
+                cam_movement = movements[frame_num]
                 for track_id, track_info in track.items():
                     if "position" not in track_info:
                         continue
@@ -276,6 +344,7 @@ def get_perspective_transformer(
     pixel_vertices: Sequence[Sequence[float]] | None = None,
     court_width: float = 68.0,
     court_length: float = 23.32,
+    out_of_bounds_policy: str = "strict",
     backend: str = "python",
     *,
     strict: bool = False,
@@ -287,6 +356,7 @@ def get_perspective_transformer(
         pixel_vertices: 4-point broadcast polygon coordinates.
         court_width: Target pitch width in meters.
         court_length: Target pitch length in meters.
+        out_of_bounds_policy: 'strict', 'clip', or 'extrapolate'.
         backend: "python" or "cpp".
         strict: Whether to error if requested backend is unavailable.
 
@@ -300,6 +370,7 @@ def get_perspective_transformer(
             pixel_vertices=pixel_vertices,
             court_width=court_width,
             court_length=court_length,
+            out_of_bounds_policy=out_of_bounds_policy,
         )
 
     from ..perspective.transformer import PerspectiveTransformer
@@ -308,6 +379,7 @@ def get_perspective_transformer(
         pixel_vertices=pixel_vertices,
         court_width=court_width,
         court_length=court_length,
+        out_of_bounds_policy=out_of_bounds_policy,
     )
 
 
@@ -315,6 +387,9 @@ def get_camera_motion_estimator(
     first_frame: np.ndarray,
     minimum_distance: float = 5.0,
     scene_cut_threshold: float = 80.0,
+    margin_ratio_x: float = 0.05,
+    margin_ratio_y: float = 0.10,
+    use_dynamic_margins: bool = True,
     backend: str = "python",
     *,
     strict: bool = False,
@@ -326,6 +401,9 @@ def get_camera_motion_estimator(
         first_frame: Initial video frame.
         minimum_distance: Minimum feature displacement threshold in pixels.
         scene_cut_threshold: Maximum displacement before declaring a scene cut.
+        margin_ratio_x: Horizontal margin ratio for feature tracking.
+        margin_ratio_y: Vertical margin ratio for feature tracking.
+        use_dynamic_margins: Whether to scale margins dynamically with resolution.
         backend: "python" or "cpp".
         strict: Whether to error if requested backend is unavailable.
 
@@ -339,6 +417,9 @@ def get_camera_motion_estimator(
             first_frame=first_frame,
             minimum_distance=minimum_distance,
             scene_cut_threshold=scene_cut_threshold,
+            margin_ratio_x=margin_ratio_x,
+            margin_ratio_y=margin_ratio_y,
+            use_dynamic_margins=use_dynamic_margins,
         )
 
     from ..camera_motion.estimator import CameraMotionEstimator
@@ -347,4 +428,7 @@ def get_camera_motion_estimator(
         first_frame=first_frame,
         minimum_distance=minimum_distance,
         scene_cut_threshold=scene_cut_threshold,
+        margin_ratio_x=margin_ratio_x,
+        margin_ratio_y=margin_ratio_y,
+        use_dynamic_margins=use_dynamic_margins,
     )

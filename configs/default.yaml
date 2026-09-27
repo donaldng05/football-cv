@@ -22,6 +22,13 @@ tracking:
   cache_path: "stubs/track_stubs.pkl"
   camera_movement_cache_path: "stubs/camera_movement_stubs.pkl"
 
+camera_motion:
+  minimum_distance: 5.0
+  scene_cut_threshold: 80.0
+  margin_ratio_x: 0.05
+  margin_ratio_y: 0.10
+  use_dynamic_margins: true
+
 possession:
   max_player_ball_distance: 70.0
   minimum_control_frames: 3
@@ -39,6 +46,7 @@ perspective:
     - [1640, 915]
   court_width: 68.0
   court_length: 23.32
+  out_of_bounds_policy: "strict"
 
 analytics:
   enabled: true

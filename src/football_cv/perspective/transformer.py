@@ -17,9 +17,11 @@ class PerspectiveTransformer:
         pixel_vertices: Sequence[Sequence[float]] | None = None,
         court_width: float = 68.0,
         court_length: float = 23.32,
+        out_of_bounds_policy: str = "strict",
     ):
         self.court_width = court_width
         self.court_length = court_length
+        self.out_of_bounds_policy = out_of_bounds_policy.lower()
 
         if pixel_vertices is None:
             pixel_vertices = [
@@ -45,20 +47,40 @@ class PerspectiveTransformer:
             self.pixel_vertices, self.target_vertices
         )
 
-    def transform_point(self, point: Sequence[float] | np.ndarray) -> np.ndarray | None:
+    def transform_point(
+        self,
+        point: Sequence[float] | np.ndarray,
+        out_of_bounds_policy: str | None = None,
+    ) -> np.ndarray | None:
         """
         Transform a 2D point from broadcast pixel coordinates to metric pitch coordinates.
 
-        Returns None if the point lies outside the calibrated pitch boundary polygon.
+        Args:
+            point: Pixel coordinates [x, y].
+            out_of_bounds_policy: Optional override ('strict', 'clip', 'extrapolate').
+
+        Returns:
+            np.ndarray of shape (1, 2) in metric pitch coordinates, or None if outside polygon in strict mode.
         """
-        pt = (int(point[0]), int(point[1]))
-        is_inside = cv2.pointPolygonTest(self.pixel_vertices, pt, False) >= 0
-        if not is_inside:
+        policy = (out_of_bounds_policy or self.out_of_bounds_policy).lower()
+        pt = (float(point[0]), float(point[1]))
+        is_inside = (
+            cv2.pointPolygonTest(self.pixel_vertices, (int(pt[0]), int(pt[1])), False)
+            >= 0
+        )
+
+        if not is_inside and policy == "strict":
             return None
 
         reshaped = np.array(point, dtype=np.float32).reshape(-1, 1, 2)
         transformed = cv2.perspectiveTransform(reshaped, self.perspective_transformer)
-        return transformed.reshape(-1, 2)
+        res = transformed.reshape(-1, 2)
+
+        if not is_inside and policy == "clip":
+            res[0, 0] = float(np.clip(res[0, 0], 0.0, self.court_width))
+            res[0, 1] = float(np.clip(res[0, 1], 0.0, self.court_length))
+
+        return res
 
     def add_transformed_position_to_tracks(self, tracks: dict[str, Any]) -> None:
         """Apply perspective transformation to object positions in tracks."""

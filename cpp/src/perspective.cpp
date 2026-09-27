@@ -154,8 +154,11 @@ bool PerspectiveTransformer::is_point_inside(const Point2D& pt) const noexcept {
     return inside;
 }
 
-std::optional<Point2D> PerspectiveTransformer::transform_point(const Point2D& point) const noexcept {
-    if (!is_point_inside(point)) {
+std::optional<Point2D> PerspectiveTransformer::transform_point(
+    const Point2D& point,
+    bool check_boundary
+) const noexcept {
+    if (check_boundary && !is_point_inside(point)) {
         return std::nullopt;
     }
 

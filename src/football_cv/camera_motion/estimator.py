@@ -3,13 +3,14 @@ Camera motion estimation using sparse optical flow.
 """
 
 import pickle
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
-from ..utils.geometry import measure_distance, measure_xy_distance
+from ..utils.geometry import measure_distance
 
 
 class CameraMotionEstimator:
@@ -20,9 +21,15 @@ class CameraMotionEstimator:
         first_frame: np.ndarray,
         minimum_distance: float = 5.0,
         scene_cut_threshold: float = 80.0,
+        margin_ratio_x: float = 0.05,
+        margin_ratio_y: float = 0.10,
+        use_dynamic_margins: bool = True,
     ):
         self.minimum_distance = minimum_distance
         self.scene_cut_threshold = scene_cut_threshold
+        self.margin_ratio_x = margin_ratio_x
+        self.margin_ratio_y = margin_ratio_y
+        self.use_dynamic_margins = use_dynamic_margins
 
         self.lk_params = dict(
             winSize=(15, 15),
@@ -31,10 +38,19 @@ class CameraMotionEstimator:
         )
 
         first_gray = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
+        h, w = first_gray.shape[:2]
         mask_features = np.zeros_like(first_gray)
-        # Mask features: isolate vertical borders to exclude players running on the pitch
-        mask_features[:, 0:20] = 1
-        mask_features[:, 900:1050] = 1
+        if use_dynamic_margins and w > 100:
+            left_w = max(20, int(w * margin_ratio_x))
+            right_w = max(20, int(w * margin_ratio_x))
+            top_h = max(20, int(h * margin_ratio_y))
+            mask_features[:, :left_w] = 1
+            mask_features[:, w - right_w :] = 1
+            mask_features[:top_h, :] = 1
+        else:
+            # Fallback legacy margins
+            mask_features[:, 0:20] = 1
+            mask_features[:, 900:1050] = 1
 
         self.features = dict(
             maxCorners=100,
@@ -44,15 +60,71 @@ class CameraMotionEstimator:
             mask=mask_features,
         )
 
+    @staticmethod
+    def filter_margin_points(
+        points: Sequence[Sequence[float] | tuple[float, float]],
+        frame_width: float,
+        left_margin_width: float = 20.0,
+        right_margin_start: float = 900.0,
+        right_margin_end: float = 1050.0,
+    ) -> list[tuple[float, float]]:
+        """Filter points to isolate vertical broadcast margins (excluding players on pitch)."""
+        filtered = []
+        for pt in points:
+            px, py = float(pt[0]), float(pt[1])
+            in_left = 0.0 <= px <= left_margin_width
+            in_right = right_margin_start <= px <= right_margin_end
+            if in_left or in_right:
+                filtered.append((px, py))
+        return filtered
+
+    @staticmethod
+    def accumulate_motion(
+        motion_steps: Sequence[Any],
+    ) -> list[tuple[float, float]]:
+        """
+        Accumulate frame-to-frame camera displacements into cumulative translation relative to frame 0.
+        """
+        cumulative: list[tuple[float, float]] = []
+        total_dx = 0.0
+        total_dy = 0.0
+        for step in motion_steps:
+            if hasattr(step, "dx") and hasattr(step, "dy"):
+                dx, dy = float(step.dx), float(step.dy)
+                is_cut = getattr(step, "is_scene_cut", False)
+            elif isinstance(step, (list, tuple)):
+                dx, dy = float(step[0]), float(step[1])
+                is_cut = False
+            else:
+                dx, dy = 0.0, 0.0
+                is_cut = False
+
+            if is_cut:
+                total_dx = 0.0
+                total_dy = 0.0
+            else:
+                total_dx += dx
+                total_dy += dy
+            cumulative.append((total_dx, total_dy))
+        return cumulative
+
     def add_adjust_positions_to_tracks(
         self,
         tracks: dict[str, Any],
         camera_movement_per_frame: list[list[float] | tuple[float, float]],
+        cumulative: bool = False,
     ) -> None:
         """Adjust object positions to compensate for camera motion."""
+        movements = (
+            self.accumulate_motion(camera_movement_per_frame)
+            if cumulative
+            else camera_movement_per_frame
+        )
         for obj_name, object_tracks in tracks.items():
             for frame_num, track in enumerate(object_tracks):
-                cam_movement = camera_movement_per_frame[frame_num]
+                if frame_num >= len(movements):
+                    continue
+                cam_movement = movements[frame_num]
                 for track_id, track_info in track.items():
                     if "position" not in track_info:
                         continue
@@ -107,26 +179,54 @@ class CameraMotionEstimator:
                 old_gray, frame_gray, old_features, None, **self.lk_params
             )
 
-            max_distance = 0.0
-            cam_dx, cam_dy = 0.0, 0.0
-
             if new_features is not None and status is not None:
                 good_new = new_features[status == 1]
                 good_old = old_features[status == 1]
 
-                for new, old in zip(good_new, good_old, strict=False):
-                    dist = measure_distance(new.ravel(), old.ravel())
-                    if dist > max_distance:
-                        max_distance = dist
-                        cam_dx, cam_dy = measure_xy_distance(old.ravel(), new.ravel())
+                if len(good_new) > 0:
+                    dxs = [
+                        float(old[0] - new[0])
+                        for old, new in zip(good_old, good_new, strict=True)
+                    ]
+                    dys = [
+                        float(old[1] - new[1])
+                        for old, new in zip(good_old, good_new, strict=True)
+                    ]
+                    dists = [
+                        float(measure_distance(old.ravel(), new.ravel()))
+                        for old, new in zip(good_old, good_new, strict=True)
+                    ]
 
-            if max_distance > self.scene_cut_threshold:
-                # Sudden flow magnitude jump indicates a scene cut or broadcast discontinuity
-                camera_movement.append((0.0, 0.0))
-                old_features = cv2.goodFeaturesToTrack(frame_gray, **self.features)
-            elif max_distance > self.minimum_distance:
-                camera_movement.append((cam_dx, cam_dy))
-                old_features = cv2.goodFeaturesToTrack(frame_gray, **self.features)
+                    med_dist = float(np.median(dists))
+                    if med_dist > self.scene_cut_threshold:
+                        # Sudden flow jump indicates a broadcast scene cut
+                        camera_movement.append((0.0, 0.0))
+                        old_features = cv2.goodFeaturesToTrack(
+                            frame_gray, **self.features
+                        )
+                        old_gray = frame_gray
+                        continue
+
+                    cam_dx = float(np.median(dxs))
+                    cam_dy = float(np.median(dys))
+                    disp_mag = float(np.sqrt(cam_dx**2 + cam_dy**2))
+
+                    if disp_mag > self.minimum_distance:
+                        camera_movement.append((cam_dx, cam_dy))
+                        old_features = cv2.goodFeaturesToTrack(
+                            frame_gray, **self.features
+                        )
+                    elif med_dist > self.minimum_distance:
+                        # Opposing flow vectors canceled out, but feature points underwent significant motion
+                        best_idx = int(np.argmin([abs(d - med_dist) for d in dists]))
+                        camera_movement.append((dxs[best_idx], dys[best_idx]))
+                        old_features = cv2.goodFeaturesToTrack(
+                            frame_gray, **self.features
+                        )
+                    else:
+                        camera_movement.append((0.0, 0.0))
+                else:
+                    camera_movement.append((0.0, 0.0))
             else:
                 camera_movement.append((0.0, 0.0))
 

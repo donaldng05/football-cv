@@ -48,6 +48,7 @@ class MatchPipeline:
             pixel_vertices=config.perspective.pixel_vertices,
             court_width=config.perspective.court_width,
             court_length=config.perspective.court_length,
+            out_of_bounds_policy=config.perspective.out_of_bounds_policy,
             backend=config.vision.backend,
         )
         self.ball_interpolator = BallInterpolator()
@@ -110,6 +111,11 @@ class MatchPipeline:
         # 2. Camera movement compensation
         cam_estimator = get_camera_motion_estimator(
             frames[0],
+            minimum_distance=self.config.camera_motion.minimum_distance,
+            scene_cut_threshold=self.config.camera_motion.scene_cut_threshold,
+            margin_ratio_x=self.config.camera_motion.margin_ratio_x,
+            margin_ratio_y=self.config.camera_motion.margin_ratio_y,
+            use_dynamic_margins=self.config.camera_motion.use_dynamic_margins,
             backend=self.config.vision.backend,
         )
         cam_stub = self.config.tracking.camera_movement_cache_path
@@ -121,7 +127,9 @@ class MatchPipeline:
         while len(camera_movement) < len(frames):
             camera_movement.append((0.0, 0.0))
 
-        cam_estimator.add_adjust_positions_to_tracks(tracks, camera_movement)
+        cam_estimator.add_adjust_positions_to_tracks(
+            tracks, camera_movement, cumulative=True
+        )
 
         # 3. Perspective transformation
         self.view_transformer.add_transformed_position_to_tracks(tracks)
