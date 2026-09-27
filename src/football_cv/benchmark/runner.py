@@ -113,6 +113,12 @@ class BenchmarkRunner:
                 tracks["referees"].append({})
                 tracks["balls"].append({})
 
+            # Ball position interpolation
+            tracks["balls"] = pipeline.ball_interpolator.interpolate_ball_positions(
+                tracks["balls"],
+                limit=pipeline.config.possession.maximum_missing_ball_frames,
+            )
+
             pipeline.tracker.add_positions_to_tracks(tracks)
 
         # 2. Camera motion compensation
@@ -138,23 +144,14 @@ class BenchmarkRunner:
         with profiler.time_stage("perspective_transform"):
             pipeline.view_transformer.add_transformed_position_to_tracks(tracks)
 
-        # 4. Ball position interpolation
-        with profiler.time_stage("ball_interpolation"):
-            tracks["balls"] = pipeline.ball_interpolator.interpolate_ball_positions(
-                tracks["balls"],
-                limit=pipeline.config.possession.maximum_missing_ball_frames,
-            )
-
-        # 5. Speed and distance calculation
+        # 4. Speed and distance calculation
         with profiler.time_stage("speed_distance"):
             pipeline.speed_distance_estimator.add_speed_and_distance_to_tracks(tracks)
 
-        # 6. Team color classification
+        # 5. Team color classification
         with profiler.time_stage("team_assignment"):
-            if tracks["players"] and len(tracks["players"][0]) > 0:
-                pipeline.team_classifier.assign_team_color(
-                    frames[0], tracks["players"][0]
-                )
+            if tracks["players"] and any(len(p) > 0 for p in tracks["players"]):
+                pipeline.team_classifier.assign_team_color(frames, tracks["players"])
                 for frame_num, player_tracks in enumerate(tracks["players"]):
                     for player_id, track in player_tracks.items():
                         team = pipeline.team_classifier.get_player_team(
@@ -165,7 +162,7 @@ class BenchmarkRunner:
                             pipeline.team_classifier.team_colors.get(team, (0, 0, 255))
                         )
 
-        # 7. Ball possession assignment
+        # 6. Ball possession assignment
         with profiler.time_stage("possession_assignment"):
             team_ball_control: list[int] = []
             for frame_num, player_track in enumerate(tracks["players"]):
@@ -174,9 +171,11 @@ class BenchmarkRunner:
                     if frame_num < len(tracks["balls"])
                     else {}
                 )
-                ball_bbox = ball_dict.get(1, {}).get("bbox", [])
+                ball_info = ball_dict.get(1, {})
+                ball_bbox = ball_info.get("bbox", [])
+                ball_transformed = ball_info.get("position_transformed")
                 assigned_player = pipeline.player_ball_assigner.assign_ball_to_player(
-                    player_track, ball_bbox
+                    player_track, ball_bbox, ball_transformed=ball_transformed
                 )
 
                 if assigned_player != -1:

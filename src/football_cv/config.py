@@ -71,6 +71,8 @@ class TrackingConfig:
 @dataclass
 class PossessionConfig:
     max_player_ball_distance: float = 70.0
+    max_player_ball_distance_meters: float = 2.0
+    use_metric_distance: bool = True
     minimum_control_frames: int = 3
     maximum_missing_ball_frames: int = 10
 
@@ -78,6 +80,10 @@ class PossessionConfig:
         if self.max_player_ball_distance <= 0:
             raise ConfigurationError(
                 f"max_player_ball_distance must be positive, got {self.max_player_ball_distance}"
+            )
+        if self.max_player_ball_distance_meters <= 0:
+            raise ConfigurationError(
+                f"max_player_ball_distance_meters must be positive, got {self.max_player_ball_distance_meters}"
             )
         if self.minimum_control_frames < 1:
             raise ConfigurationError(
@@ -93,6 +99,7 @@ class PossessionConfig:
 class MovementConfig:
     speed_window_frames: int = 5
     minimum_displacement: float = 0.0
+    method: str = "rolling"
 
     def validate(self) -> None:
         if self.speed_window_frames < 1:
@@ -103,6 +110,32 @@ class MovementConfig:
             raise ConfigurationError(
                 f"minimum_displacement must be >= 0.0, got {self.minimum_displacement}"
             )
+        valid_methods = {"rolling", "chunk"}
+        if self.method.lower() not in valid_methods:
+            raise ConfigurationError(
+                f"Invalid movement method '{self.method}'. Must be one of {valid_methods}"
+            )
+
+
+@dataclass
+class TeamClassificationConfig:
+    color_space: str = "lab"
+    sample_frames: int = 15
+    voting_window: int = 10
+    min_box_area: float = 800.0
+
+    def validate(self) -> None:
+        valid_spaces = {"lab", "bgr", "hsv"}
+        if self.color_space.lower() not in valid_spaces:
+            raise ConfigurationError(
+                f"Invalid color_space '{self.color_space}'. Must be one of {valid_spaces}"
+            )
+        if self.sample_frames < 1:
+            raise ConfigurationError("sample_frames must be >= 1")
+        if self.voting_window < 1:
+            raise ConfigurationError("voting_window must be >= 1")
+        if self.min_box_area < 0:
+            raise ConfigurationError("min_box_area must be >= 0")
 
 
 @dataclass
@@ -253,6 +286,9 @@ class AppConfig:
     camera_motion: CameraMotionConfig = field(default_factory=CameraMotionConfig)
     possession: PossessionConfig = field(default_factory=PossessionConfig)
     movement: MovementConfig = field(default_factory=MovementConfig)
+    team_classification: TeamClassificationConfig = field(
+        default_factory=TeamClassificationConfig
+    )
     perspective: PerspectiveConfig = field(default_factory=PerspectiveConfig)
     analytics: AnalyticsConfig = field(default_factory=AnalyticsConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
@@ -265,6 +301,7 @@ class AppConfig:
         self.camera_motion.validate()
         self.possession.validate()
         self.movement.validate()
+        self.team_classification.validate()
         self.perspective.validate()
         self.analytics.validate()
         self.vision.validate()
@@ -338,6 +375,9 @@ def load_config(
         camera_motion_cfg = CameraMotionConfig(**raw_data.get("camera_motion", {}))
         possession_cfg = PossessionConfig(**raw_data.get("possession", {}))
         movement_cfg = MovementConfig(**raw_data.get("movement", {}))
+        team_classification_cfg = TeamClassificationConfig(
+            **raw_data.get("team_classification", {})
+        )
 
         persp_data = raw_data.get("perspective", {})
         perspective_cfg = PerspectiveConfig(**persp_data)
@@ -367,6 +407,7 @@ def load_config(
             camera_motion=camera_motion_cfg,
             possession=possession_cfg,
             movement=movement_cfg,
+            team_classification=team_classification_cfg,
             perspective=perspective_cfg,
             analytics=analytics_cfg,
             vision=vision_cfg,
