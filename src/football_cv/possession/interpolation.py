@@ -48,10 +48,15 @@ class BallInterpolator:
         df_boxes = df_boxes.bfill(limit=limit)
 
         interpolated_positions = []
-        for row in df_boxes.to_numpy():
+        for idx, row in enumerate(df_boxes.to_numpy()):
             if pd.isna(row[0]):
                 interpolated_positions.append({})
             else:
-                interpolated_positions.append({1: {"bbox": row.tolist()}})
+                orig_info = (
+                    ball_positions[idx].get(1, {}) if idx < len(ball_positions) else {}
+                )
+                entry = dict(orig_info)
+                entry["bbox"] = row.tolist()
+                interpolated_positions.append({1: entry})
 
         return interpolated_positions
