@@ -112,6 +112,29 @@ class TestConfigValidationRules:
         ):
             PossessionConfig(max_player_ball_distance=-10).validate()
 
+        with pytest.raises(
+            ConfigurationError, match="max_player_ball_distance_meters must be positive"
+        ):
+            PossessionConfig(max_player_ball_distance_meters=-1.0).validate()
+
+    def test_invalid_movement_method_raises(self):
+        from football_cv.config import MovementConfig
+
+        with pytest.raises(ConfigurationError, match="Invalid movement method"):
+            MovementConfig(method="invalid_algo").validate()
+
+    def test_team_classification_validation(self):
+        from football_cv.config import TeamClassificationConfig
+
+        cfg = TeamClassificationConfig(color_space="lab", sample_frames=10)
+        cfg.validate()
+
+        with pytest.raises(ConfigurationError, match="Invalid color_space"):
+            TeamClassificationConfig(color_space="unsupported_color").validate()
+
+        with pytest.raises(ConfigurationError, match="sample_frames must be >= 1"):
+            TeamClassificationConfig(sample_frames=0).validate()
+
     def test_invalid_perspective_vertices_raises(self):
         # 3 points instead of 4
         with pytest.raises(

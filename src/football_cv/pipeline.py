@@ -56,10 +56,16 @@ class MatchPipeline:
             frame_window=config.movement.speed_window_frames,
             frame_rate=config.video.frame_rate,
             minimum_displacement=config.movement.minimum_displacement,
+            method=config.movement.method,
         )
-        self.team_classifier = TeamClassifier()
+        self.team_classifier = TeamClassifier(
+            color_space=config.team_classification.color_space,
+            voting_window=config.team_classification.voting_window,
+        )
         self.player_ball_assigner = PlayerBallAssigner(
-            max_player_ball_distance=config.possession.max_player_ball_distance
+            max_player_ball_distance=config.possession.max_player_ball_distance,
+            max_player_ball_distance_meters=config.possession.max_player_ball_distance_meters,
+            use_metric_distance=config.possession.use_metric_distance,
         )
         self.annotator = FrameAnnotator()
 
@@ -106,9 +112,14 @@ class MatchPipeline:
             tracks["referees"].append({})
             tracks["balls"].append({})
 
+        # 2. Ball position interpolation (interpolate missing ball detections before calculating spatial positions)
+        tracks["balls"] = self.ball_interpolator.interpolate_ball_positions(
+            tracks["balls"], limit=self.config.possession.maximum_missing_ball_frames
+        )
+
         self.tracker.add_positions_to_tracks(tracks)
 
-        # 2. Camera movement compensation
+        # 3. Camera movement compensation
         cam_estimator = get_camera_motion_estimator(
             frames[0],
             minimum_distance=self.config.camera_motion.minimum_distance,
@@ -131,20 +142,20 @@ class MatchPipeline:
             tracks, camera_movement, cumulative=True
         )
 
-        # 3. Perspective transformation
+        # 4. Perspective transformation (homography projection to real-world meters)
         self.view_transformer.add_transformed_position_to_tracks(tracks)
-
-        # 4. Ball position interpolation
-        tracks["balls"] = self.ball_interpolator.interpolate_ball_positions(
-            tracks["balls"], limit=self.config.possession.maximum_missing_ball_frames
-        )
 
         # 5. Speed and distance estimation
         self.speed_distance_estimator.add_speed_and_distance_to_tracks(tracks)
 
         # 6. Team color assignment
-        if tracks["players"] and len(tracks["players"][0]) > 0:
-            self.team_classifier.assign_team_color(frames[0], tracks["players"][0])
+        if tracks["players"] and any(len(p) > 0 for p in tracks["players"]):
+            self.team_classifier.assign_team_color(
+                frames,
+                tracks["players"],
+                sample_frames=self.config.team_classification.sample_frames,
+                min_box_area=self.config.team_classification.min_box_area,
+            )
 
             for frame_num, player_tracks in enumerate(tracks["players"]):
                 for player_id, track in player_tracks.items():
@@ -156,16 +167,18 @@ class MatchPipeline:
                         self.team_classifier.team_colors.get(team, (0, 0, 255))
                     )
 
-        # 7. Ball possession assignment
+        # 7. Ball possession assignment (metric space proximity with pixel fallback)
         team_ball_control = []
         for frame_num, player_track in enumerate(tracks["players"]):
             ball_dict = (
                 tracks["balls"][frame_num] if frame_num < len(tracks["balls"]) else {}
             )
-            ball_bbox = ball_dict.get(1, {}).get("bbox", [])
+            ball_info = ball_dict.get(1, {})
+            ball_bbox = ball_info.get("bbox", [])
+            ball_transformed = ball_info.get("position_transformed")
 
             assigned_player = self.player_ball_assigner.assign_ball_to_player(
-                player_track, ball_bbox
+                player_track, ball_bbox, ball_transformed=ball_transformed
             )
 
             if assigned_player != -1:

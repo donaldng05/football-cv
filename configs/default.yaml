@@ -31,12 +31,21 @@ camera_motion:
 
 possession:
   max_player_ball_distance: 70.0
+  max_player_ball_distance_meters: 2.0
+  use_metric_distance: true
   minimum_control_frames: 3
   maximum_missing_ball_frames: 10
 
 movement:
   speed_window_frames: 5
-  minimum_displacement: 0.0
+  minimum_displacement: 0.05
+  method: "rolling"
+
+team_classification:
+  color_space: "lab"
+  sample_frames: 15
+  voting_window: 10
+  min_box_area: 800.0
 
 perspective:
   pixel_vertices:
