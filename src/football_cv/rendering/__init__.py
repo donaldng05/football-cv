@@ -3,6 +3,6 @@ Rendering and video annotation package for football_cv.
 """
 
 from .annotations import FrameAnnotator
-from .video_writer import AnnotatedVideoWriter
+from .video_writer import AnnotatedVideoWriter, IncrementalVideoWriter
 
-__all__ = ["AnnotatedVideoWriter", "FrameAnnotator"]
+__all__ = ["AnnotatedVideoWriter", "FrameAnnotator", "IncrementalVideoWriter"]

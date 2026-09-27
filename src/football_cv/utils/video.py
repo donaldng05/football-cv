@@ -72,6 +72,46 @@ def stream_video_frames(
         cap.release()
 
 
+def stream_video_chunks(
+    video_path: str | Path,
+    chunk_size: int = 64,
+    start_frame: int = 0,
+    end_frame: int | None = None,
+) -> Iterator[tuple[int, list[np.ndarray]]]:
+    """
+    Generator streaming video frames in chunks of `chunk_size` without loading the full video.
+
+    Args:
+        video_path: Path to video file.
+        chunk_size: Number of frames per chunk.
+        start_frame: Index of the first frame to yield (0-indexed).
+        end_frame: Index of the frame to stop before (exclusive). If None, reads to end.
+
+    Yields:
+        Tuple of (chunk_start_index, chunk_frames_list).
+    """
+    if chunk_size <= 0:
+        raise VideoProcessingError(f"chunk_size must be positive, got {chunk_size}")
+
+    current_chunk: list[np.ndarray] = []
+    chunk_start_idx = start_frame
+
+    for idx, frame in stream_video_frames(
+        video_path, start_frame=start_frame, end_frame=end_frame
+    ):
+        if not current_chunk:
+            chunk_start_idx = idx
+
+        current_chunk.append(frame)
+
+        if len(current_chunk) == chunk_size:
+            yield chunk_start_idx, current_chunk
+            current_chunk = []
+
+    if current_chunk:
+        yield chunk_start_idx, current_chunk
+
+
 def read_video(
     video_path: str | Path,
     start_frame: int = 0,
