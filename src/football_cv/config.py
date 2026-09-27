@@ -304,6 +304,30 @@ class VisionConfig:
 
 
 @dataclass
+class StreamingConfig:
+    enabled: bool = False
+    chunk_size: int = 64
+    warmup_frames: int = 30
+    max_buffer_frames: int = 120
+
+    def validate(self) -> None:
+        if self.chunk_size < 16:
+            raise ConfigurationError(f"chunk_size must be >= 16, got {self.chunk_size}")
+        if self.warmup_frames < 10:
+            raise ConfigurationError(
+                f"warmup_frames must be >= 10, got {self.warmup_frames}"
+            )
+        if self.warmup_frames > self.max_buffer_frames:
+            raise ConfigurationError(
+                f"warmup_frames ({self.warmup_frames}) cannot exceed max_buffer_frames ({self.max_buffer_frames})"
+            )
+        if self.chunk_size > self.max_buffer_frames:
+            raise ConfigurationError(
+                f"chunk_size ({self.chunk_size}) cannot exceed max_buffer_frames ({self.max_buffer_frames})"
+            )
+
+
+@dataclass
 class AppConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     video: VideoConfig = field(default_factory=VideoConfig)
@@ -317,6 +341,7 @@ class AppConfig:
     perspective: PerspectiveConfig = field(default_factory=PerspectiveConfig)
     analytics: AnalyticsConfig = field(default_factory=AnalyticsConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    streaming: StreamingConfig = field(default_factory=StreamingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     def validate(self) -> None:
@@ -330,6 +355,7 @@ class AppConfig:
         self.perspective.validate()
         self.analytics.validate()
         self.vision.validate()
+        self.streaming.validate()
         self.logging.validate()
 
     def to_dict(self) -> dict[str, Any]:
@@ -423,6 +449,7 @@ def load_config(
         )
 
         vision_cfg = VisionConfig(**raw_data.get("vision", {}))
+        streaming_cfg = StreamingConfig(**raw_data.get("streaming", {}))
         logging_cfg = LoggingConfig(**raw_data.get("logging", {}))
 
         config = AppConfig(
@@ -436,6 +463,7 @@ def load_config(
             perspective=perspective_cfg,
             analytics=analytics_cfg,
             vision=vision_cfg,
+            streaming=streaming_cfg,
             logging=logging_cfg,
         )
         config.validate()

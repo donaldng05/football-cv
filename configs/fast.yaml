@@ -79,6 +79,13 @@ analytics:
 vision:
   backend: "python"
 
+streaming:
+  enabled: false
+  chunk_size: 32
+  warmup_frames: 15
+  max_buffer_frames: 64
+
 logging:
   level: "DEBUG"
   log_file: "outputs/logs/football-cv-fast.log"
+

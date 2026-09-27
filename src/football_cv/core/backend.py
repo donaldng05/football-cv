@@ -202,6 +202,116 @@ class CppCameraMotionEstimatorAdapter:
             blockSize=7,
             mask=mask_features,
         )
+        self._last_gray: np.ndarray | None = None
+        self._last_features: np.ndarray | None = None
+        self._cumulative_movement: tuple[float, float] = (0.0, 0.0)
+
+    def reset(self) -> None:
+        """Reset internal streaming camera state."""
+        self._last_gray = None
+        self._last_features = None
+        self._cumulative_movement = (0.0, 0.0)
+
+    def estimate_chunk(self, frames: list[np.ndarray]) -> list[tuple[float, float]]:
+        """
+        Estimate frame-by-frame camera translation (dx, dy) across a chunk of frames.
+        Delegates displacement calculations and scene cut detection to native C++ core.
+        """
+        import cv2
+
+        displacements: list[tuple[float, float]] = []
+        if not frames:
+            return displacements
+
+        for frame in frames:
+            frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            if self._last_gray is None:
+                self._last_gray = frame_gray
+                self._last_features = cv2.goodFeaturesToTrack(
+                    self._last_gray, **self.features
+                )
+                displacements.append((0.0, 0.0))
+                continue
+
+            if self._last_features is None or len(self._last_features) == 0:
+                self._last_features = cv2.goodFeaturesToTrack(
+                    self._last_gray, **self.features
+                )
+                if self._last_features is None or len(self._last_features) == 0:
+                    displacements.append((0.0, 0.0))
+                    self._last_gray = frame_gray
+                    continue
+
+            new_features, status, _ = cv2.calcOpticalFlowPyrLK(
+                self._last_gray, frame_gray, self._last_features, None, **self.lk_params
+            )
+
+            cam_dx, cam_dy = 0.0, 0.0
+            is_cut = False
+
+            if new_features is not None and status is not None:
+                good_new = new_features[status == 1]
+                good_old = self._last_features[status == 1]
+                motion = self.core.estimate_from_features(good_old, good_new)
+                cam_dx, cam_dy = motion.dx, motion.dy
+                is_cut = motion.is_scene_cut
+
+            if is_cut:
+                displacements.append((0.0, 0.0))
+                self._cumulative_movement = (0.0, 0.0)
+                self._last_features = cv2.goodFeaturesToTrack(
+                    frame_gray, **self.features
+                )
+            else:
+                displacements.append((cam_dx, cam_dy))
+                self._cumulative_movement = (
+                    self._cumulative_movement[0] + cam_dx,
+                    self._cumulative_movement[1] + cam_dy,
+                )
+                if cam_dx != 0.0 or cam_dy != 0.0:
+                    self._last_features = cv2.goodFeaturesToTrack(
+                        frame_gray, **self.features
+                    )
+
+            self._last_gray = frame_gray
+
+        return displacements
+
+    def add_adjust_positions_to_chunk(
+        self,
+        tracks: dict[str, Any],
+        camera_movement_chunk: list[tuple[float, float]],
+    ) -> list[tuple[float, float]]:
+        """
+        Adjust object positions in chunk tracks using cumulative motion.
+        Returns the cumulative motion for each frame in the chunk.
+        """
+        total_dx = sum(m[0] for m in camera_movement_chunk)
+        total_dy = sum(m[1] for m in camera_movement_chunk)
+        base_x = self._cumulative_movement[0] - total_dx
+        base_y = self._cumulative_movement[1] - total_dy
+
+        cum_list: list[tuple[float, float]] = []
+        for m in camera_movement_chunk:
+            base_x += m[0]
+            base_y += m[1]
+            cum_list.append((base_x, base_y))
+
+        for _obj_name, object_tracks in tracks.items():
+            for frame_idx, track in enumerate(object_tracks):
+                if frame_idx >= len(cum_list):
+                    continue
+                cam_cum = cum_list[frame_idx]
+                for _track_id, track_info in track.items():
+                    if "position" not in track_info:
+                        continue
+                    pos = track_info["position"]
+                    track_info["position_adjusted"] = (
+                        float(pos[0] - cam_cum[0]),
+                        float(pos[1] - cam_cum[1]),
+                    )
+        return cum_list
 
     @staticmethod
     def accumulate_motion(

@@ -183,3 +183,27 @@ class TestConfigValidationRules:
 
         with pytest.raises(ConfigurationError, match="ball_interpolation_method"):
             PossessionConfig(ball_interpolation_method="unsupported_method").validate()
+
+    def test_streaming_validation(self):
+        from football_cv.config import StreamingConfig
+
+        cfg = StreamingConfig()
+        cfg.validate()
+
+        with pytest.raises(ConfigurationError, match="chunk_size must be >= 16"):
+            StreamingConfig(chunk_size=10).validate()
+
+        with pytest.raises(ConfigurationError, match="warmup_frames must be >= 10"):
+            StreamingConfig(warmup_frames=5).validate()
+
+        with pytest.raises(
+            ConfigurationError,
+            match=r"warmup_frames .* cannot exceed max_buffer_frames",
+        ):
+            StreamingConfig(warmup_frames=150, max_buffer_frames=120).validate()
+
+        with pytest.raises(
+            ConfigurationError,
+            match=r"chunk_size .* cannot exceed max_buffer_frames",
+        ):
+            StreamingConfig(chunk_size=150, max_buffer_frames=120).validate()

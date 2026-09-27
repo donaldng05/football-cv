@@ -104,3 +104,60 @@ class BallInterpolator:
                 interpolated_positions.append({1: entry})
 
         return interpolated_positions
+
+
+class StreamingBallInterpolator:
+    """
+    Sliding-window ball interpolator designed for streaming processing.
+    Maintains a rolling lookahead buffer so missing frames near chunk boundaries
+    are interpolated seamlessly without loading the full video.
+    """
+
+    def __init__(
+        self,
+        limit: int = 15,
+        method: str = "linear",
+        max_displacement_per_frame: float = 250.0,
+    ):
+        self.limit = limit
+        self.method = method
+        self.max_displacement_per_frame = max_displacement_per_frame
+        self.buffer: list[dict[int, dict[str, Any]]] = []
+
+    def update(
+        self,
+        chunk_balls: list[dict[int, dict[str, Any]]],
+        is_last_chunk: bool = False,
+    ) -> list[dict[int, dict[str, Any]]]:
+        """
+        Ingest a chunk of ball detections and return finalized interpolated frames.
+        """
+        self.buffer.extend(chunk_balls)
+
+        if is_last_chunk:
+            if not self.buffer:
+                return []
+            result = BallInterpolator.interpolate_ball_positions(
+                self.buffer,
+                limit=self.limit,
+                method=self.method,
+                max_displacement_per_frame=self.max_displacement_per_frame,
+            )
+            self.buffer = []
+            return result
+
+        # We keep a lookahead buffer of length = limit
+        if len(self.buffer) <= self.limit:
+            return []
+
+        num_emit = len(self.buffer) - self.limit
+        interpolated = BallInterpolator.interpolate_ball_positions(
+            self.buffer,
+            limit=self.limit,
+            method=self.method,
+            max_displacement_per_frame=self.max_displacement_per_frame,
+        )
+
+        emitted = interpolated[:num_emit]
+        self.buffer = self.buffer[num_emit:]
+        return emitted
