@@ -20,9 +20,12 @@ CameraMotion CameraMotionEstimator::estimate_from_features(
         return CameraMotion{0.0, 0.0, false};
     }
 
-    double max_distance = 0.0;
-    double cam_dx = 0.0;
-    double cam_dy = 0.0;
+    std::vector<double> dxs;
+    std::vector<double> dys;
+    std::vector<double> dists;
+    dxs.reserve(old_features.size());
+    dys.reserve(old_features.size());
+    dists.reserve(old_features.size());
 
     for (size_t i = 0; i < old_features.size(); ++i) {
         const auto& old_pt = old_features[i];
@@ -33,22 +36,53 @@ CameraMotion CameraMotionEstimator::estimate_from_features(
         }
 
         const double dist = old_pt.distance_to(new_pt);
-        if (dist > max_distance) {
-            max_distance = dist;
-            // In Python: cam_dx, cam_dy = measure_xy_distance(old.ravel(), new.ravel())
-            // which computes (old[0] - new[0], old[1] - new[1])
-            cam_dx = old_pt.x - new_pt.x;
-            cam_dy = old_pt.y - new_pt.y;
-        }
+        dxs.push_back(old_pt.x - new_pt.x);
+        dys.push_back(old_pt.y - new_pt.y);
+        dists.push_back(dist);
     }
 
-    if (max_distance > scene_cut_threshold_) {
+    if (dxs.empty()) {
+        return CameraMotion{0.0, 0.0, false};
+    }
+
+    auto compute_median = [](std::vector<double>& v) -> double {
+        const size_t n = v.size();
+        const size_t mid = n / 2;
+        std::nth_element(v.begin(), v.begin() + mid, v.end());
+        if (n % 2 != 0) {
+            return v[mid];
+        }
+        auto max_lower = *std::max_element(v.begin(), v.begin() + mid);
+        return (v[mid] + max_lower) * 0.5;
+    };
+
+    double med_dist = compute_median(dists);
+    if (med_dist > scene_cut_threshold_) {
         // Sudden flow magnitude jump indicates a broadcast scene cut
         return CameraMotion{0.0, 0.0, true};
     }
 
-    if (max_distance > minimum_distance_) {
+    double cam_dx = compute_median(dxs);
+    double cam_dy = compute_median(dys);
+    double displacement_mag = std::sqrt(cam_dx * cam_dx + cam_dy * cam_dy);
+
+    if (displacement_mag > minimum_distance_) {
         return CameraMotion{cam_dx, cam_dy, false};
+    }
+
+    if (med_dist > minimum_distance_) {
+        // Opposing flow vectors canceled out, but feature points underwent significant motion
+        // Find point with distance closest to median distance
+        double best_diff = std::numeric_limits<double>::infinity();
+        size_t best_idx = 0;
+        for (size_t i = 0; i < dists.size(); ++i) {
+            double diff = std::abs(dists[i] - med_dist);
+            if (diff < best_diff) {
+                best_diff = diff;
+                best_idx = i;
+            }
+        }
+        return CameraMotion{dxs[best_idx], dys[best_idx], false};
     }
 
     return CameraMotion{0.0, 0.0, false};

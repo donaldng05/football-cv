@@ -246,14 +246,14 @@ PYBIND11_MODULE(_core, m) {
         }), py::arg("pixel_vertices") = py::none(),
             py::arg("court_width") = 68.0,
             py::arg("court_length") = 23.32)
-        .def("transform_point", [](const PerspectiveTransformer& self, py::object point) -> std::optional<Point2D> {
+        .def("transform_point", [](const PerspectiveTransformer& self, py::object point, bool check_boundary) -> std::optional<Point2D> {
             Point2D pt = parse_point(point);
-            return self.transform_point(pt);
-        }, py::arg("point"),
+            return self.transform_point(pt, check_boundary);
+        }, py::arg("point"), py::arg("check_boundary") = true,
            "Transform a 2D point from broadcast pixel coordinates to metric pitch coordinates.")
-        .def("transform_point", [](const PerspectiveTransformer& self, double x, double y) -> std::optional<Point2D> {
-            return self.transform_point(Point2D{x, y});
-        }, py::arg("x"), py::arg("y"),
+        .def("transform_point", [](const PerspectiveTransformer& self, double x, double y, bool check_boundary) -> std::optional<Point2D> {
+            return self.transform_point(Point2D{x, y}, check_boundary);
+        }, py::arg("x"), py::arg("y"), py::arg("check_boundary") = true,
            "Transform (x, y) coordinates to metric pitch coordinates.")
         .def("transform_points", [](const PerspectiveTransformer& self, py::object points) {
             std::vector<Point2D> pts = parse_points(points);

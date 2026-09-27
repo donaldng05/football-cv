@@ -31,9 +31,10 @@ public:
      * @brief Project a 2D image coordinate to pitch metric coordinates.
      *
      * @param point Image coordinate (pixel x, y).
-     * @return Point2D in pitch meters, or std::nullopt if point is outside polygon boundary.
+     * @param check_boundary If true, returns std::nullopt when point is outside calibrated polygon.
+     * @return Point2D in pitch meters, or std::nullopt if point is outside polygon boundary (when check_boundary is true).
      */
-    std::optional<Point2D> transform_point(const Point2D& point) const noexcept;
+    std::optional<Point2D> transform_point(const Point2D& point, bool check_boundary = true) const noexcept;
 
     /**
      * @brief Batch project multiple image coordinates.
