@@ -103,6 +103,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["python", "cpp"],
         help="Vision computation backend ('python' or 'cpp')",
     )
+    analyze_parser.add_argument(
+        "--streaming",
+        action="store_true",
+        default=None,
+        help="Enable memory-bounded sliding-window streaming pipeline",
+    )
+    analyze_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Chunk size (number of frames) for streaming execution",
+    )
 
     # --------------------------------------------------------------------------
     # Subcommand: report
@@ -306,6 +318,14 @@ def _extract_overrides(args: argparse.Namespace) -> dict:
         vision_overrides["backend"] = args.backend
     if vision_overrides:
         overrides["vision"] = vision_overrides
+
+    streaming_overrides = {}
+    if getattr(args, "streaming", None) is not None:
+        streaming_overrides["enabled"] = args.streaming
+    if getattr(args, "chunk_size", None) is not None:
+        streaming_overrides["chunk_size"] = args.chunk_size
+    if streaming_overrides:
+        overrides["streaming"] = streaming_overrides
 
     return overrides
 
