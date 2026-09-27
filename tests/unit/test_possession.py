@@ -122,3 +122,59 @@ class TestBallInterpolator:
         assert 1 in interpolated[1]
         mid_box = interpolated[1][1]["bbox"]
         assert mid_box == [10.0, 10.0, 20.0, 20.0]
+
+    def test_interpolate_15_frame_gap(self):
+        # Frame 0 at (0, 0), Frame 16 at (160, 160) (gap of 15 missing frames)
+        ball_frames = [{1: {"bbox": [0.0, 0.0, 10.0, 10.0]}}]
+        for _ in range(15):
+            ball_frames.append({})
+        ball_frames.append({1: {"bbox": [160.0, 160.0, 170.0, 170.0]}})
+
+        interpolated = BallInterpolator.interpolate_ball_positions(
+            ball_frames, limit=15
+        )
+        assert len(interpolated) == 17
+        for f in range(1, 16):
+            assert 1 in interpolated[f], f"Frame {f} should be interpolated"
+            expected_c = f * 10.0
+            assert abs(interpolated[f][1]["bbox"][0] - expected_c) < 1e-4
+
+    def test_interpolate_velocity_gating_rejects_impossible_teleportation(self):
+        # Frame 0 at (100, 100), Frame 3 at (1900, 1900)
+        # Gap = 3 - 0 = 3 frames. Distance ≈ 2545px -> ~848px/frame > 250px/frame
+        ball_frames = [
+            {1: {"bbox": [95.0, 95.0, 105.0, 105.0]}},
+            {},
+            {},
+            {1: {"bbox": [1895.0, 1895.0, 1905.0, 1905.0]}},
+        ]
+        interpolated = BallInterpolator.interpolate_ball_positions(
+            ball_frames, limit=15, max_displacement_per_frame=250.0
+        )
+        # Frames 1 and 2 must NOT be interpolated because of impossible jump
+        assert interpolated[1] == {}
+        assert interpolated[2] == {}
+        assert 1 in interpolated[0]
+        assert 1 in interpolated[3]
+
+    def test_interpolate_quadratic_produces_smooth_arc(self):
+        # Ball moves along a parabola y = -(x-2)^2 + 4, sampled at x = 0, 2, 4
+        # At x=0: y=0; at x=2: y=4; at x=4: y=0
+        ball_frames = [
+            {1: {"bbox": [0.0, 0.0, 2.0, 2.0]}},  # frame 0
+            {},  # frame 1 (x=1 -> y=3 in quadratic)
+            {1: {"bbox": [2.0, 4.0, 4.0, 6.0]}},  # frame 2
+            {},  # frame 3 (x=3 -> y=3 in quadratic)
+            {1: {"bbox": [4.0, 0.0, 6.0, 2.0]}},  # frame 4
+        ]
+        interpolated = BallInterpolator.interpolate_ball_positions(
+            ball_frames, limit=5, method="quadratic"
+        )
+        assert 1 in interpolated[1]
+        assert 1 in interpolated[3]
+        # In quadratic, at frame 1 (x=1), y1 should be close to 3.0 (rather than linear 2.0)
+        assert abs(interpolated[1][1]["bbox"][1] - 3.0) < 0.2
+
+    def test_interpolate_empty_frames(self):
+        assert BallInterpolator.interpolate_ball_positions([]) == []
+        assert BallInterpolator.interpolate_ball_positions([{}, {}, {}]) == [{}, {}, {}]
