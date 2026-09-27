@@ -147,3 +147,39 @@ class TestConfigValidationRules:
             PerspectiveConfig(
                 pixel_vertices=[[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]]
             ).validate()
+
+    def test_tracking_validation(self):
+        from football_cv.config import TrackingConfig
+
+        cfg = TrackingConfig()
+        cfg.validate()
+
+        with pytest.raises(ConfigurationError, match="track_activation_threshold"):
+            TrackingConfig(track_activation_threshold=-0.1).validate()
+
+        with pytest.raises(ConfigurationError, match="track_activation_threshold"):
+            TrackingConfig(track_activation_threshold=1.5).validate()
+
+        with pytest.raises(ConfigurationError, match="lost_track_buffer"):
+            TrackingConfig(lost_track_buffer=0).validate()
+
+        with pytest.raises(ConfigurationError, match="minimum_matching_threshold"):
+            TrackingConfig(minimum_matching_threshold=0.0).validate()
+
+        with pytest.raises(ConfigurationError, match="ball_tracker_max_distance"):
+            TrackingConfig(ball_tracker_max_distance=0.0).validate()
+
+        with pytest.raises(ConfigurationError, match="ball_min_confidence"):
+            TrackingConfig(ball_min_confidence=1.5).validate()
+
+    def test_possession_interpolation_validation(self):
+        cfg = PossessionConfig(
+            ball_interpolation_method="quadratic", maximum_missing_ball_frames=15
+        )
+        cfg.validate()
+
+        with pytest.raises(ConfigurationError, match="maximum_missing_ball_frames"):
+            PossessionConfig(maximum_missing_ball_frames=-1).validate()
+
+        with pytest.raises(ConfigurationError, match="ball_interpolation_method"):
+            PossessionConfig(ball_interpolation_method="unsupported_method").validate()

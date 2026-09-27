@@ -10,7 +10,9 @@ import numpy as np
 import supervision as sv
 
 from ..utils.geometry import get_center_of_bbox, get_foot_position
+from .ball_tracker import BallTracker
 from .detector import ObjectDetector
+from .reid import TrackSanitizer
 
 
 class ObjectTracker:
@@ -24,6 +26,13 @@ class ObjectTracker:
         device: str | None = None,
         engine: str = "ultralytics",
         nms_threshold: float = 0.50,
+        track_activation_threshold: float = 0.25,
+        lost_track_buffer: int = 60,
+        minimum_matching_threshold: float = 0.70,
+        frame_rate: int = 25,
+        ball_max_displacement_pixels: float = 200.0,
+        ball_min_confidence: float = 0.15,
+        enable_reid_sanitizer: bool = True,
     ):
         self.detector = ObjectDetector(
             model_path=model_path,
@@ -33,7 +42,17 @@ class ObjectTracker:
             engine=engine,
             nms_threshold=nms_threshold,
         )
-        self.tracker = sv.ByteTrack()
+        self.tracker = sv.ByteTrack(
+            track_activation_threshold=track_activation_threshold,
+            lost_track_buffer=lost_track_buffer,
+            minimum_matching_threshold=minimum_matching_threshold,
+            frame_rate=frame_rate,
+        )
+        self.ball_tracker = BallTracker(
+            max_displacement_pixels=ball_max_displacement_pixels,
+            min_confidence=ball_min_confidence,
+        )
+        self.enable_reid_sanitizer = enable_reid_sanitizer
 
     def add_positions_to_tracks(self, tracks: dict[str, Any]) -> None:
         """Calculate and add center (ball) or foot position (players/referees) to tracks."""
@@ -118,13 +137,27 @@ class ObjectTracker:
                 elif cls_id == referee_cls_id:
                     tracks["referees"][frame_num][track_id] = {"bbox": bbox}
 
-            # Extract ball detections directly from detector (ball is not passed through ByteTrack)
+            # Collect ball candidates with confidences and feed to kinematic BallTracker
+            ball_candidates = []
             for frame_det in detection_supervision:
                 bbox = frame_det[0].tolist()
+                conf = (
+                    float(frame_det[2])
+                    if len(frame_det) > 2 and frame_det[2] is not None
+                    else 1.0
+                )
                 cls_id = frame_det[3]
 
                 if cls_id == ball_cls_id:
-                    tracks["balls"][frame_num][1] = {"bbox": bbox}
+                    ball_candidates.append({"bbox": bbox, "confidence": conf})
+
+            tracked_ball = self.ball_tracker.update(ball_candidates)
+            if tracked_ball is not None:
+                tracks["balls"][frame_num][1] = tracked_ball
+
+        # Apply spatiotemporal tracklet stitching if Re-ID sanitizer is enabled
+        if self.enable_reid_sanitizer:
+            TrackSanitizer.stitch_fragmented_tracks(tracks["players"])
 
         if stub_path is not None:
             stub_p = Path(stub_path)

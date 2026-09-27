@@ -21,6 +21,12 @@ tracking:
   use_cached_tracks: true
   cache_path: "stubs/track_stubs.pkl"
   camera_movement_cache_path: "stubs/camera_movement_stubs.pkl"
+  track_activation_threshold: 0.25
+  lost_track_buffer: 60
+  minimum_matching_threshold: 0.70
+  ball_tracker_max_distance: 200.0
+  ball_min_confidence: 0.15
+  enable_reid_sanitizer: true
 
 camera_motion:
   minimum_distance: 5.0
@@ -34,7 +40,8 @@ possession:
   max_player_ball_distance_meters: 2.0
   use_metric_distance: true
   minimum_control_frames: 3
-  maximum_missing_ball_frames: 10
+  maximum_missing_ball_frames: 15
+  ball_interpolation_method: "quadratic"
 
 movement:
   speed_window_frames: 5
