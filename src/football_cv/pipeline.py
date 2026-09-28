@@ -165,7 +165,12 @@ class MatchPipeline:
 
         # 4. Perspective transformation (homography projection to real-world meters)
         with self._time_stage("perspective_transform"):
-            self.view_transformer.add_transformed_position_to_tracks(tracks)
+            camera_matrices = getattr(cam_estimator, "camera_matrices", None)
+            if camera_matrices and len(camera_matrices) > len(frames):
+                camera_matrices = camera_matrices[start_idx:end_idx]
+            self.view_transformer.add_transformed_position_to_tracks(
+                tracks, camera_matrices=camera_matrices
+            )
 
         # 5. Speed and distance estimation
         with self._time_stage("speed_distance"):
@@ -309,10 +314,13 @@ class MatchPipeline:
 
             chunk_movement = cam_estimator.estimate_chunk(chunk_frames)
             cam_estimator.add_adjust_positions_to_chunk(chunk_tracks, chunk_movement)
+            chunk_matrices = getattr(cam_estimator, "last_chunk_matrices", None)
 
         # 3. Perspective transformation (homography)
         with self._time_stage("perspective_transform"):
-            self.view_transformer.add_transformed_position_to_tracks(chunk_tracks)
+            self.view_transformer.add_transformed_position_to_tracks(
+                chunk_tracks, camera_matrices=chunk_matrices
+            )
 
         # 4. Speed & distance estimation
         with self._time_stage("speed_distance"):
