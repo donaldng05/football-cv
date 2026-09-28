@@ -62,12 +62,68 @@ class CameraMotionEstimator:
         self._last_gray: np.ndarray | None = None
         self._last_features: np.ndarray | None = None
         self._cumulative_movement: tuple[float, float] = (0.0, 0.0)
+        self._cumulative_matrix: np.ndarray = np.eye(3, dtype=np.float32)
+        self.camera_matrices: list[np.ndarray] = [np.eye(3, dtype=np.float32)]
+        self.last_chunk_matrices: list[np.ndarray] = []
 
     def reset(self) -> None:
         """Reset internal streaming camera state."""
         self._last_gray = None
         self._last_features = None
         self._cumulative_movement = (0.0, 0.0)
+        self._cumulative_matrix = np.eye(3, dtype=np.float32)
+        self.camera_matrices = [np.eye(3, dtype=np.float32)]
+        self.last_chunk_matrices = []
+
+    @staticmethod
+    def create_background_mask(
+        frame_shape: tuple[int, int] | tuple[int, int, int],
+        entity_bboxes: Sequence[Sequence[float]] | None = None,
+        margin: int = 15,
+    ) -> np.ndarray:
+        """
+        Create a binary mask for optical flow feature tracking excluding moving players and objects.
+        """
+        h, w = frame_shape[:2]
+        mask = np.ones((h, w), dtype=np.uint8)
+        if entity_bboxes:
+            for bbox in entity_bboxes:
+                if len(bbox) >= 4:
+                    x1 = max(0, int(bbox[0]) - margin)
+                    y1 = max(0, int(bbox[1]) - margin)
+                    x2 = min(w, int(bbox[2]) + margin)
+                    y2 = min(h, int(bbox[3]) + margin)
+                    mask[y1:y2, x1:x2] = 0
+        return mask
+
+    @staticmethod
+    def _estimate_inter_frame_matrix(
+        good_new: np.ndarray,
+        good_old: np.ndarray,
+        cam_dx: float,
+        cam_dy: float,
+        is_cut: bool,
+    ) -> np.ndarray:
+        """
+        Estimate 3x3 projective transformation H_{t -> t-1} mapping points from
+        current frame t into previous frame t-1 coordinate space.
+        """
+        if is_cut:
+            return np.eye(3, dtype=np.float32)
+
+        if len(good_new) >= 4 and len(good_old) >= 4:
+            affine_mat, inliers = cv2.estimateAffinePartial2D(
+                good_new, good_old, method=cv2.RANSAC, ransacReprojThreshold=3.0
+            )
+            if affine_mat is not None and (inliers is None or np.sum(inliers) >= 3):
+                h = np.eye(3, dtype=np.float32)
+                h[:2, :] = affine_mat.astype(np.float32)
+                return h
+
+        h = np.eye(3, dtype=np.float32)
+        h[0, 2] = float(cam_dx)
+        h[1, 2] = float(cam_dy)
+        return h
 
     def estimate_chunk(self, frames: list[np.ndarray]) -> list[tuple[float, float]]:
         """
@@ -75,7 +131,9 @@ class CameraMotionEstimator:
         Maintains internal state across chunks with O(1) memory.
         """
         displacements: list[tuple[float, float]] = []
+        chunk_matrices: list[np.ndarray] = []
         if not frames:
+            self.last_chunk_matrices = []
             return displacements
 
         for frame in frames:
@@ -87,6 +145,7 @@ class CameraMotionEstimator:
                     self._last_gray, **self.features
                 )
                 displacements.append((0.0, 0.0))
+                chunk_matrices.append(self._cumulative_matrix.copy())
                 continue
 
             if self._last_features is None or len(self._last_features) == 0:
@@ -95,6 +154,7 @@ class CameraMotionEstimator:
                 )
                 if self._last_features is None or len(self._last_features) == 0:
                     displacements.append((0.0, 0.0))
+                    chunk_matrices.append(self._cumulative_matrix.copy())
                     self._last_gray = frame_gray
                     continue
 
@@ -104,6 +164,7 @@ class CameraMotionEstimator:
 
             cam_dx, cam_dy = 0.0, 0.0
             is_cut = False
+            h_step = np.eye(3, dtype=np.float32)
 
             if new_features is not None and status is not None:
                 good_new = new_features[status == 1]
@@ -136,9 +197,15 @@ class CameraMotionEstimator:
                         ):
                             cam_dx, cam_dy = dx, dy
 
+                    h_step = self._estimate_inter_frame_matrix(
+                        good_new, good_old, cam_dx, cam_dy, is_cut
+                    )
+
             if is_cut:
                 displacements.append((0.0, 0.0))
                 self._cumulative_movement = (0.0, 0.0)
+                self._cumulative_matrix = np.eye(3, dtype=np.float32)
+                chunk_matrices.append(self._cumulative_matrix.copy())
                 self._last_features = cv2.goodFeaturesToTrack(
                     frame_gray, **self.features
                 )
@@ -148,6 +215,8 @@ class CameraMotionEstimator:
                     self._cumulative_movement[0] + cam_dx,
                     self._cumulative_movement[1] + cam_dy,
                 )
+                self._cumulative_matrix = self._cumulative_matrix @ h_step
+                chunk_matrices.append(self._cumulative_matrix.copy())
                 if cam_dx != 0.0 or cam_dy != 0.0:
                     self._last_features = cv2.goodFeaturesToTrack(
                         frame_gray, **self.features
@@ -155,6 +224,7 @@ class CameraMotionEstimator:
 
             self._last_gray = frame_gray
 
+        self.last_chunk_matrices = chunk_matrices
         return displacements
 
     def add_adjust_positions_to_chunk(
@@ -288,10 +358,25 @@ class CameraMotionEstimator:
         """
         if read_from_stub and stub_path is not None and Path(stub_path).is_file():
             with open(stub_path, "rb") as f:
-                return pickle.load(f)
+                movement = pickle.load(f)
+            # Reconstruct camera_matrices from displacement stubs
+            matrices = [np.eye(3, dtype=np.float32)]
+            running_m = np.eye(3, dtype=np.float32)
+            for item in movement[1:]:
+                dx, dy = float(item[0]), float(item[1])
+                step_m = np.eye(3, dtype=np.float32)
+                step_m[0, 2] = dx
+                step_m[1, 2] = dy
+                running_m = running_m @ step_m
+                matrices.append(running_m.copy())
+            self.camera_matrices = matrices
+            return movement
 
         camera_movement: list[tuple[float, float]] = [(0.0, 0.0)]
+        camera_matrices: list[np.ndarray] = [np.eye(3, dtype=np.float32)]
+        cum_matrix = np.eye(3, dtype=np.float32)
         if not frames:
+            self.camera_matrices = camera_matrices
             return camera_movement
 
         old_gray = cv2.cvtColor(frames[0], cv2.COLOR_BGR2GRAY)
@@ -304,12 +389,17 @@ class CameraMotionEstimator:
                 old_features = cv2.goodFeaturesToTrack(old_gray, **self.features)
                 if old_features is None or len(old_features) == 0:
                     camera_movement.append((0.0, 0.0))
+                    camera_matrices.append(cum_matrix.copy())
                     old_gray = frame_gray
                     continue
 
             new_features, status, _ = cv2.calcOpticalFlowPyrLK(
                 old_gray, frame_gray, old_features, None, **self.lk_params
             )
+
+            cam_dx, cam_dy = 0.0, 0.0
+            is_cut = False
+            h_step = np.eye(3, dtype=np.float32)
 
             if new_features is not None and status is not None:
                 good_new = new_features[status == 1]
@@ -332,37 +422,43 @@ class CameraMotionEstimator:
                     med_dist = float(np.median(dists))
                     if med_dist > self.scene_cut_threshold:
                         # Sudden flow jump indicates a broadcast scene cut
-                        camera_movement.append((0.0, 0.0))
-                        old_features = cv2.goodFeaturesToTrack(
-                            frame_gray, **self.features
-                        )
-                        old_gray = frame_gray
-                        continue
-
-                    cam_dx = float(np.median(dxs))
-                    cam_dy = float(np.median(dys))
-                    disp_mag = float(np.sqrt(cam_dx**2 + cam_dy**2))
-
-                    if disp_mag > self.minimum_distance:
-                        camera_movement.append((cam_dx, cam_dy))
-                        old_features = cv2.goodFeaturesToTrack(
-                            frame_gray, **self.features
-                        )
-                    elif med_dist > self.minimum_distance:
-                        # Opposing flow vectors canceled out, but feature points underwent significant motion
-                        best_idx = int(np.argmin([abs(d - med_dist) for d in dists]))
-                        camera_movement.append((dxs[best_idx], dys[best_idx]))
-                        old_features = cv2.goodFeaturesToTrack(
-                            frame_gray, **self.features
-                        )
+                        is_cut = True
                     else:
-                        camera_movement.append((0.0, 0.0))
-                else:
-                    camera_movement.append((0.0, 0.0))
-            else:
+                        dx = float(np.median(dxs))
+                        dy = float(np.median(dys))
+                        disp_mag = float(np.sqrt(dx**2 + dy**2))
+                        if (
+                            disp_mag > self.minimum_distance
+                            or med_dist > self.minimum_distance
+                        ):
+                            cam_dx, cam_dy = dx, dy
+                        elif med_dist > self.minimum_distance:
+                            best_idx = int(np.argmin([abs(d - med_dist) for d in dists]))
+                            cam_dx, cam_dy = dxs[best_idx], dys[best_idx]
+
+                    h_step = self._estimate_inter_frame_matrix(
+                        good_new, good_old, cam_dx, cam_dy, is_cut
+                    )
+
+            if is_cut:
                 camera_movement.append((0.0, 0.0))
+                cum_matrix = np.eye(3, dtype=np.float32)
+                camera_matrices.append(cum_matrix.copy())
+                old_features = cv2.goodFeaturesToTrack(
+                    frame_gray, **self.features
+                )
+            else:
+                camera_movement.append((cam_dx, cam_dy))
+                cum_matrix = cum_matrix @ h_step
+                camera_matrices.append(cum_matrix.copy())
+                if cam_dx != 0.0 or cam_dy != 0.0:
+                    old_features = cv2.goodFeaturesToTrack(
+                        frame_gray, **self.features
+                    )
 
             old_gray = frame_gray
+
+        self.camera_matrices = camera_matrices
 
         if stub_path is not None:
             stub_p = Path(stub_path)
