@@ -78,13 +78,15 @@ class PlayerBallAssigner:
                 continue
             player_bbox = player["bbox"]
 
+            foot_center = ((player_bbox[0] + player_bbox[2]) / 2.0, player_bbox[3])
+            distance_center = measure_distance(foot_center, ball_position)
             distance_left = measure_distance(
                 (player_bbox[0], player_bbox[3]), ball_position
             )
             distance_right = measure_distance(
                 (player_bbox[2], player_bbox[3]), ball_position
             )
-            distance = min(distance_left, distance_right)
+            distance = min(distance_left, distance_right, distance_center)
 
             if distance < self.max_player_ball_distance and distance < minimum_distance:
                 minimum_distance = distance
