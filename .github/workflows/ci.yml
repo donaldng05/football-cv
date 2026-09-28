@@ -48,11 +48,22 @@ jobs:
       - name: Install Package and Test Dependencies
         run: pip install -e ".[dev]"
 
+      - name: Install Build Tools
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+
+      - name: Build Native C++ Core Extension
+        run: |
+          cmake -B cpp/build -S cpp -DCMAKE_BUILD_TYPE=Release -DENABLE_ONNXRUNTIME=ON -DPython3_EXECUTABLE=$(which python)
+          cmake --build cpp/build --config Release
+
       - name: Ensure Test Video Asset
         run: python scripts/generate_dummy_video.py
 
       - name: Run Test Suite with Coverage
         run: pytest --cov=football_cv --cov-report=term-missing --cov-report=xml
+
+      - name: Run C++ Native Core Parity Tests
+        run: pytest tests/parity/ -v
 
   cli-validate:
     name: CLI Pre-Flight Sanity Check
