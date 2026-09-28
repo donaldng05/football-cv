@@ -52,6 +52,22 @@ public:
     ) override;
 
     /**
+     * @brief Run object detection across a batch of BGR images using true batched tensor inference.
+     */
+    std::vector<std::vector<Detection>> detect_batch(
+        const std::vector<const uint8_t*>& frames_data,
+        int width,
+        int height,
+        float confidence_threshold = 0.10f,
+        float nms_threshold = 0.50f
+    ) override;
+
+    /**
+     * @brief Whether the underlying ONNX model supports dynamic batch execution.
+     */
+    bool is_dynamic_batch() const noexcept { return is_dynamic_batch_; }
+
+    /**
      * @brief Get model input tensor width (default: 640).
      */
     int input_width() const noexcept { return input_width_; }
@@ -76,6 +92,7 @@ private:
     int input_width_{640};
     int input_height_{640};
     int num_classes_{4};
+    bool is_dynamic_batch_{false};
 
     // PIMPL / opaque pointers for ONNX Runtime internals
     std::unique_ptr<Ort::Env> env_;
@@ -87,12 +104,23 @@ private:
 
     // Preallocated buffers for performance
     std::vector<float> input_tensor_values_;
+    std::vector<float> batch_tensor_values_;
 
     void preprocess(
         const uint8_t* bgr_data,
         int width,
         int height,
         std::vector<float>& chw_tensor,
+        float& scale,
+        float& pad_x,
+        float& pad_y
+    );
+
+    void preprocess_to_ptr(
+        const uint8_t* bgr_data,
+        int width,
+        int height,
+        float* chw_dst,
         float& scale,
         float& pad_x,
         float& pad_y
