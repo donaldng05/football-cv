@@ -3,6 +3,7 @@ Decoupled end-to-end computer vision and analytics pipeline orchestrator.
 """
 
 import logging
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from .analytics import (
     HeatmapGenerator,
     PassNetworkGenerator,
 )
+from .benchmark.profiler import PipelineProfiler
 from .config import AppConfig
 from .core import get_camera_motion_estimator, get_perspective_transformer
 from .movement.speed_distance import SpeedDistanceEstimator
@@ -33,8 +35,9 @@ logger = logging.getLogger("football_cv.pipeline")
 class MatchPipeline:
     """Orchestrates detection, tracking, kinematics, and rendering for match analysis."""
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, profiler: PipelineProfiler | None = None):
         self.config = config
+        self.profiler = profiler
         logger.info(f"Initializing MatchPipeline (backend='{config.vision.backend}')")
 
         self.tracker = ObjectTracker(
@@ -89,6 +92,12 @@ class MatchPipeline:
             fps=config.video.frame_rate,
         )
 
+    def _time_stage(self, stage_name: str):
+        """Return context manager for timing a stage if profiling is active."""
+        if self.profiler is not None:
+            return self.profiler.time_stage(stage_name)
+        return nullcontext()
+
     def process(
         self, frames: list[np.ndarray], tracks_stub_path: str | None = None
     ) -> dict[str, Any]:
@@ -103,9 +112,10 @@ class MatchPipeline:
         # 1. Multi-object tracking
         use_stubs = self.config.tracking.use_cached_tracks
         stub_path = tracks_stub_path or self.config.tracking.cache_path
-        tracks = self.tracker.get_tracked_objects(
-            frames, read_from_stub=use_stubs, stub_path=stub_path
-        )
+        with self._time_stage("detection_and_tracking"):
+            tracks = self.tracker.get_tracked_objects(
+                frames, read_from_stub=use_stubs, stub_path=stub_path
+            )
 
         # Align stub frame counts with input frames slice if loaded from full-match cache
         start_idx = self.config.video.start_frame
@@ -120,99 +130,108 @@ class MatchPipeline:
             tracks["balls"].append({})
 
         # 2. Ball position interpolation (interpolate missing ball detections before calculating spatial positions)
-        tracks["balls"] = self.ball_interpolator.interpolate_ball_positions(
-            tracks["balls"],
-            limit=self.config.possession.maximum_missing_ball_frames,
-            method=self.config.possession.ball_interpolation_method,
-        )
+        with self._time_stage("ball_interpolation"):
+            tracks["balls"] = self.ball_interpolator.interpolate_ball_positions(
+                tracks["balls"],
+                limit=self.config.possession.maximum_missing_ball_frames,
+                method=self.config.possession.ball_interpolation_method,
+            )
 
         self.tracker.add_positions_to_tracks(tracks)
 
         # 3. Camera movement compensation
-        cam_estimator = get_camera_motion_estimator(
-            frames[0],
-            minimum_distance=self.config.camera_motion.minimum_distance,
-            scene_cut_threshold=self.config.camera_motion.scene_cut_threshold,
-            margin_ratio_x=self.config.camera_motion.margin_ratio_x,
-            margin_ratio_y=self.config.camera_motion.margin_ratio_y,
-            use_dynamic_margins=self.config.camera_motion.use_dynamic_margins,
-            backend=self.config.vision.backend,
-        )
-        cam_stub = self.config.tracking.camera_movement_cache_path
-        camera_movement = cam_estimator.get_camera_movement(
-            frames, read_from_stub=use_stubs, stub_path=cam_stub
-        )
-        if len(camera_movement) > len(frames):
-            camera_movement = camera_movement[start_idx:end_idx]
-        while len(camera_movement) < len(frames):
-            camera_movement.append((0.0, 0.0))
+        with self._time_stage("camera_motion"):
+            cam_estimator = get_camera_motion_estimator(
+                frames[0],
+                minimum_distance=self.config.camera_motion.minimum_distance,
+                scene_cut_threshold=self.config.camera_motion.scene_cut_threshold,
+                margin_ratio_x=self.config.camera_motion.margin_ratio_x,
+                margin_ratio_y=self.config.camera_motion.margin_ratio_y,
+                use_dynamic_margins=self.config.camera_motion.use_dynamic_margins,
+                backend=self.config.vision.backend,
+            )
+            cam_stub = self.config.tracking.camera_movement_cache_path
+            camera_movement = cam_estimator.get_camera_movement(
+                frames, read_from_stub=use_stubs, stub_path=cam_stub
+            )
+            if len(camera_movement) > len(frames):
+                camera_movement = camera_movement[start_idx:end_idx]
+            while len(camera_movement) < len(frames):
+                camera_movement.append((0.0, 0.0))
 
-        cam_estimator.add_adjust_positions_to_tracks(
-            tracks, camera_movement, cumulative=True
-        )
-
-        # 4. Perspective transformation (homography projection to real-world meters)
-        self.view_transformer.add_transformed_position_to_tracks(tracks)
-
-        # 5. Speed and distance estimation
-        self.speed_distance_estimator.add_speed_and_distance_to_tracks(tracks)
-
-        # 6. Team color assignment
-        if tracks["players"] and any(len(p) > 0 for p in tracks["players"]):
-            self.team_classifier.assign_team_color(
-                frames,
-                tracks["players"],
-                sample_frames=self.config.team_classification.sample_frames,
-                min_box_area=self.config.team_classification.min_box_area,
+            cam_estimator.add_adjust_positions_to_tracks(
+                tracks, camera_movement, cumulative=True
             )
 
-            for frame_num, player_tracks in enumerate(tracks["players"]):
-                for player_id, track in player_tracks.items():
-                    team = self.team_classifier.get_player_team(
-                        frames[frame_num], track["bbox"], player_id
-                    )
-                    tracks["players"][frame_num][player_id]["team"] = team
-                    tracks["players"][frame_num][player_id]["team_color"] = (
-                        self.team_classifier.team_colors.get(team, (0, 0, 255))
-                    )
+        # 4. Perspective transformation (homography projection to real-world meters)
+        with self._time_stage("perspective_transform"):
+            self.view_transformer.add_transformed_position_to_tracks(tracks)
 
-            if self.config.tracking.enable_reid_sanitizer:
-                TrackSanitizer.sanitize_team_consistency(tracks["players"])
+        # 5. Speed and distance estimation
+        with self._time_stage("speed_distance"):
+            self.speed_distance_estimator.add_speed_and_distance_to_tracks(tracks)
+
+        # 6. Team color assignment
+        with self._time_stage("team_assignment"):
+            if tracks["players"] and any(len(p) > 0 for p in tracks["players"]):
+                self.team_classifier.assign_team_color(
+                    frames,
+                    tracks["players"],
+                    sample_frames=self.config.team_classification.sample_frames,
+                    min_box_area=self.config.team_classification.min_box_area,
+                )
+
+                for frame_num, player_tracks in enumerate(tracks["players"]):
+                    for player_id, track in player_tracks.items():
+                        team = self.team_classifier.get_player_team(
+                            frames[frame_num], track["bbox"], player_id
+                        )
+                        tracks["players"][frame_num][player_id]["team"] = team
+                        tracks["players"][frame_num][player_id]["team_color"] = (
+                            self.team_classifier.team_colors.get(team, (0, 0, 255))
+                        )
+
+                if self.config.tracking.enable_reid_sanitizer:
+                    TrackSanitizer.sanitize_team_consistency(tracks["players"])
 
         # 7. Ball possession assignment (metric space proximity with pixel fallback)
         team_ball_control = []
-        for frame_num, player_track in enumerate(tracks["players"]):
-            ball_dict = (
-                tracks["balls"][frame_num] if frame_num < len(tracks["balls"]) else {}
-            )
-            ball_info = ball_dict.get(1, {})
-            ball_bbox = ball_info.get("bbox", [])
-            ball_transformed = ball_info.get("position_transformed")
+        with self._time_stage("possession_assignment"):
+            for frame_num, player_track in enumerate(tracks["players"]):
+                ball_dict = (
+                    tracks["balls"][frame_num]
+                    if frame_num < len(tracks["balls"])
+                    else {}
+                )
+                ball_info = ball_dict.get(1, {})
+                ball_bbox = ball_info.get("bbox", [])
+                ball_transformed = ball_info.get("position_transformed")
 
-            assigned_player = self.player_ball_assigner.assign_ball_to_player(
-                player_track, ball_bbox, ball_transformed=ball_transformed
-            )
+                assigned_player = self.player_ball_assigner.assign_ball_to_player(
+                    player_track, ball_bbox, ball_transformed=ball_transformed
+                )
 
-            if assigned_player != -1:
-                tracks["players"][frame_num][assigned_player]["has_ball"] = True
-                team = tracks["players"][frame_num][assigned_player].get("team", 1)
-                team_ball_control.append(team)
-            else:
-                last_team = team_ball_control[-1] if team_ball_control else 1
-                team_ball_control.append(last_team)
+                if assigned_player != -1:
+                    tracks["players"][frame_num][assigned_player]["has_ball"] = True
+                    team = tracks["players"][frame_num][assigned_player].get("team", 1)
+                    team_ball_control.append(team)
+                else:
+                    last_team = team_ball_control[-1] if team_ball_control else 1
+                    team_ball_control.append(last_team)
 
         # 8. Possession intervals and candidate events
         intervals: list[PossessionInterval] = []
         events: list[CandidateEvent] = []
-        if self.config.analytics.enabled:
-            intervals = self.interval_extractor.extract_intervals(
-                player_tracks=tracks["players"],
-                team_ball_control=team_ball_control,
-            )
-            events = self.event_builder.build_events(
-                intervals=intervals,
-                player_tracks=tracks["players"],
-            )
+        with self._time_stage("analytics_inference"):
+            if self.config.analytics.enabled:
+                intervals = self.interval_extractor.extract_intervals(
+                    player_tracks=tracks["players"],
+                    team_ball_control=team_ball_control,
+                )
+                events = self.event_builder.build_events(
+                    intervals=intervals,
+                    player_tracks=tracks["players"],
+                )
 
         return {
             "tracks": tracks,
@@ -231,26 +250,27 @@ class MatchPipeline:
         output_path: str | None = None,
     ) -> list[np.ndarray]:
         """Render annotation overlays and save the output video."""
-        logger.info("Rendering visual annotations")
-        annotated_frames = self.annotator.draw_annotations(
-            frames, tracks, team_ball_control
-        )
-        annotated_frames = self.annotator.draw_camera_movement(
-            annotated_frames, camera_movement
-        )
-        annotated_frames = self.annotator.draw_speed_and_distance(
-            annotated_frames, tracks
-        )
-
-        out_path = output_path or self.config.video.output_path
-        if out_path:
-            logger.info(f"Saving annotated video to {out_path}")
-            writer = AnnotatedVideoWriter(
-                output_path=out_path, fps=self.config.video.frame_rate
+        with self._time_stage("rendering"):
+            logger.info("Rendering visual annotations")
+            annotated_frames = self.annotator.draw_annotations(
+                frames, tracks, team_ball_control
             )
-            writer.write_frames(annotated_frames)
+            annotated_frames = self.annotator.draw_camera_movement(
+                annotated_frames, camera_movement
+            )
+            annotated_frames = self.annotator.draw_speed_and_distance(
+                annotated_frames, tracks
+            )
 
-        return annotated_frames
+            out_path = output_path or self.config.video.output_path
+            if out_path:
+                logger.info(f"Saving annotated video to {out_path}")
+                writer = AnnotatedVideoWriter(
+                    output_path=out_path, fps=self.config.video.frame_rate
+                )
+                writer.write_frames(annotated_frames)
+
+            return annotated_frames
 
     def _process_and_render_chunk(
         self,
@@ -267,105 +287,115 @@ class MatchPipeline:
             return
 
         # 1. Multi-object tracking for chunk
-        chunk_tracks = self.tracker.track_chunk(chunk_frames)
+        with self._time_stage("detection_and_tracking"):
+            chunk_tracks = self.tracker.track_chunk(chunk_frames)
 
         # 2. Camera motion estimation
-        if cam_estimator_holder["estimator"] is None:
-            cam_estimator = get_camera_motion_estimator(
-                chunk_frames[0],
-                minimum_distance=self.config.camera_motion.minimum_distance,
-                scene_cut_threshold=self.config.camera_motion.scene_cut_threshold,
-                margin_ratio_x=self.config.camera_motion.margin_ratio_x,
-                margin_ratio_y=self.config.camera_motion.margin_ratio_y,
-                use_dynamic_margins=self.config.camera_motion.use_dynamic_margins,
-                backend=self.config.vision.backend,
-            )
-            cam_estimator_holder["estimator"] = cam_estimator
-            self._streaming_cam_estimator = cam_estimator
-        else:
-            cam_estimator = cam_estimator_holder["estimator"]
+        with self._time_stage("camera_motion"):
+            if cam_estimator_holder["estimator"] is None:
+                cam_estimator = get_camera_motion_estimator(
+                    chunk_frames[0],
+                    minimum_distance=self.config.camera_motion.minimum_distance,
+                    scene_cut_threshold=self.config.camera_motion.scene_cut_threshold,
+                    margin_ratio_x=self.config.camera_motion.margin_ratio_x,
+                    margin_ratio_y=self.config.camera_motion.margin_ratio_y,
+                    use_dynamic_margins=self.config.camera_motion.use_dynamic_margins,
+                    backend=self.config.vision.backend,
+                )
+                cam_estimator_holder["estimator"] = cam_estimator
+                self._streaming_cam_estimator = cam_estimator
+            else:
+                cam_estimator = cam_estimator_holder["estimator"]
 
-        chunk_movement = cam_estimator.estimate_chunk(chunk_frames)
-        cam_estimator.add_adjust_positions_to_chunk(chunk_tracks, chunk_movement)
+            chunk_movement = cam_estimator.estimate_chunk(chunk_frames)
+            cam_estimator.add_adjust_positions_to_chunk(chunk_tracks, chunk_movement)
 
         # 3. Perspective transformation (homography)
-        self.view_transformer.add_transformed_position_to_tracks(chunk_tracks)
+        with self._time_stage("perspective_transform"):
+            self.view_transformer.add_transformed_position_to_tracks(chunk_tracks)
 
         # 4. Speed & distance estimation
-        self.speed_distance_estimator.estimate_chunk(chunk_tracks)
+        with self._time_stage("speed_distance"):
+            self.speed_distance_estimator.estimate_chunk(chunk_tracks)
 
         # 5. Team classification
-        if (
-            self.team_classifier.kmeans is None
-            and chunk_tracks["players"]
-            and any(len(p) > 0 for p in chunk_tracks["players"])
-        ):
-            self.team_classifier.assign_team_color(
-                chunk_frames,
-                chunk_tracks["players"],
-                sample_frames=self.config.team_classification.sample_frames,
-                min_box_area=self.config.team_classification.min_box_area,
-            )
+        with self._time_stage("team_assignment"):
+            if (
+                self.team_classifier.kmeans is None
+                and chunk_tracks["players"]
+                and any(len(p) > 0 for p in chunk_tracks["players"])
+            ):
+                self.team_classifier.assign_team_color(
+                    chunk_frames,
+                    chunk_tracks["players"],
+                    sample_frames=self.config.team_classification.sample_frames,
+                    min_box_area=self.config.team_classification.min_box_area,
+                )
 
-        for frame_num, player_tracks in enumerate(chunk_tracks["players"]):
-            for player_id, track in player_tracks.items():
-                team = self.team_classifier.get_player_team(
-                    chunk_frames[frame_num], track["bbox"], player_id
-                )
-                track["team"] = team
-                track["team_color"] = self.team_classifier.team_colors.get(
-                    team, (0, 0, 255)
-                )
+            for frame_num, player_tracks in enumerate(chunk_tracks["players"]):
+                for player_id, track in player_tracks.items():
+                    team = self.team_classifier.get_player_team(
+                        chunk_frames[frame_num], track["bbox"], player_id
+                    )
+                    track["team"] = team
+                    track["team_color"] = self.team_classifier.team_colors.get(
+                        team, (0, 0, 255)
+                    )
 
         # 6. Ball interpolation for chunk
-        interpolated_chunk_balls = streaming_interpolator.update(
-            chunk_tracks["balls"], is_last_chunk=is_last
-        )
-        if len(interpolated_chunk_balls) == len(chunk_tracks["balls"]):
-            chunk_tracks["balls"] = interpolated_chunk_balls
+        with self._time_stage("ball_interpolation"):
+            interpolated_chunk_balls = streaming_interpolator.update(
+                chunk_tracks["balls"], is_last_chunk=is_last
+            )
+            if len(interpolated_chunk_balls) == len(chunk_tracks["balls"]):
+                chunk_tracks["balls"] = interpolated_chunk_balls
 
         # 7. Ball possession assignment
-        chunk_control: list[int] = []
-        for frame_num, player_track in enumerate(chunk_tracks["players"]):
-            ball_dict = (
-                chunk_tracks["balls"][frame_num]
-                if frame_num < len(chunk_tracks["balls"])
-                else {}
-            )
-            ball_info = ball_dict.get(1, {})
-            ball_bbox = ball_info.get("bbox", [])
-            ball_transformed = ball_info.get("position_transformed")
-
-            assigned_player = self.player_ball_assigner.assign_ball_to_player(
-                player_track, ball_bbox, ball_transformed=ball_transformed
-            )
-            if assigned_player != -1:
-                chunk_tracks["players"][frame_num][assigned_player]["has_ball"] = True
-                team = chunk_tracks["players"][frame_num][assigned_player].get(
-                    "team", 1
+        with self._time_stage("possession_assignment"):
+            chunk_control: list[int] = []
+            for frame_num, player_track in enumerate(chunk_tracks["players"]):
+                ball_dict = (
+                    chunk_tracks["balls"][frame_num]
+                    if frame_num < len(chunk_tracks["balls"])
+                    else {}
                 )
-                chunk_control.append(team)
-            else:
-                last_team = (
-                    chunk_control[-1]
-                    if chunk_control
-                    else (team_ball_control[-1] if team_ball_control else 1)
-                )
-                chunk_control.append(last_team)
+                ball_info = ball_dict.get(1, {})
+                ball_bbox = ball_info.get("bbox", [])
+                ball_transformed = ball_info.get("position_transformed")
 
-        team_ball_control.extend(chunk_control)
+                assigned_player = self.player_ball_assigner.assign_ball_to_player(
+                    player_track, ball_bbox, ball_transformed=ball_transformed
+                )
+                if assigned_player != -1:
+                    chunk_tracks["players"][frame_num][assigned_player]["has_ball"] = (
+                        True
+                    )
+                    team = chunk_tracks["players"][frame_num][assigned_player].get(
+                        "team", 1
+                    )
+                    chunk_control.append(team)
+                else:
+                    last_team = (
+                        chunk_control[-1]
+                        if chunk_control
+                        else (team_ball_control[-1] if team_ball_control else 1)
+                    )
+                    chunk_control.append(last_team)
+
+            team_ball_control.extend(chunk_control)
 
         # 8. Render visual annotations on chunk and write immediately to disk
-        annotated_chunk = self.annotator.draw_annotations(
-            chunk_frames, chunk_tracks, np.array(chunk_control)
-        )
-        annotated_chunk = self.annotator.draw_camera_movement(
-            annotated_chunk, chunk_movement
-        )
-        annotated_chunk = self.annotator.draw_speed_and_distance(
-            annotated_chunk, chunk_tracks
-        )
-        writer.write_chunk(annotated_chunk)
+        with self._time_stage("rendering"):
+            annotated_chunk = self.annotator.draw_annotations(
+                chunk_frames, chunk_tracks, np.array(chunk_control)
+            )
+            annotated_chunk = self.annotator.draw_camera_movement(
+                annotated_chunk, chunk_movement
+            )
+            annotated_chunk = self.annotator.draw_speed_and_distance(
+                annotated_chunk, chunk_tracks
+            )
+            writer.write_chunk(annotated_chunk)
 
         # 9. Retain only lightweight metadata
         all_tracks["players"].extend(chunk_tracks["players"])
@@ -373,12 +403,15 @@ class MatchPipeline:
         all_tracks["balls"].extend(chunk_tracks["balls"])
         all_camera_movement.extend(chunk_movement)
 
-    def run_streaming(self) -> dict[str, Any]:
+    def run_streaming(self, profile: bool = False) -> dict[str, Any]:
         """
         Execute memory-bounded sliding-window streaming pipeline.
         Peak memory consumption is strictly bounded to chunk_size frames (~400 MB),
         enabling full match processing without OOM crashes.
         """
+        if profile and self.profiler is None:
+            self.profiler = PipelineProfiler()
+
         logger.info(
             f"Starting streaming execution (chunk_size={self.config.streaming.chunk_size})"
         )
@@ -508,12 +541,21 @@ class MatchPipeline:
                 intervals=results.get("possession_intervals", []),
             )
 
+        if self.profiler is not None:
+            total_frames = len(all_tracks["players"])
+            summary = self.profiler.summarize(num_frames=total_frames)
+            results["profile_summary"] = summary.to_dict()
+            results["profile_summary_obj"] = summary
+
         return results
 
-    def run(self) -> dict[str, Any]:
+    def run(self, profile: bool = False) -> dict[str, Any]:
         """Load video, execute full analysis pipeline, and write annotated video."""
         if self.config.streaming.enabled:
-            return self.run_streaming()
+            return self.run_streaming(profile=profile)
+
+        if profile and self.profiler is None:
+            self.profiler = PipelineProfiler()
 
         logger.info(f"Reading video from {self.config.video.input_path}")
         frames = read_video(
@@ -562,5 +604,10 @@ class MatchPipeline:
                 events=results.get("events", []),
                 intervals=results.get("possession_intervals", []),
             )
+
+        if self.profiler is not None:
+            summary = self.profiler.summarize(num_frames=len(frames))
+            results["profile_summary"] = summary.to_dict()
+            results["profile_summary_obj"] = summary
 
         return results

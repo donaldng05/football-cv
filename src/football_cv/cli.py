@@ -115,6 +115,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Chunk size (number of frames) for streaming execution",
     )
+    analyze_parser.add_argument(
+        "--profile",
+        action="store_true",
+        default=False,
+        help="Measure and display high-resolution stage-by-stage pipeline latency and FPS",
+    )
 
     # --------------------------------------------------------------------------
     # Subcommand: report
@@ -391,7 +397,24 @@ def handle_analyze(args: argparse.Namespace) -> int:
         from .pipeline import MatchPipeline
 
         pipeline = MatchPipeline(config)
-        results = pipeline.run()
+        results = pipeline.run(profile=getattr(args, "profile", False))
+
+        if getattr(args, "profile", False) and "profile_summary_obj" in results:
+            from .benchmark.profiler import format_profile_summary_table
+
+            summary_table = format_profile_summary_table(results["profile_summary_obj"])
+            print(f"\n{summary_table}\n")
+
+            if config.analytics.export_dir:
+                import json
+
+                profile_path = (
+                    Path(config.analytics.export_dir) / "profile_summary.json"
+                )
+                profile_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(profile_path, "w", encoding="utf-8") as f:
+                    json.dump(results["profile_summary"], f, indent=2)
+                print(f"[INFO] Profile metrics exported to: {profile_path}")
 
         print(
             f"\n>>> Video analysis complete! Annotated output saved to: {config.video.output_path} <<<\n"

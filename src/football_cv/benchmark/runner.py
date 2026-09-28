@@ -7,14 +7,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import AppConfig
 from ..exceptions import BenchmarkError
-from ..pipeline import MatchPipeline
 from ..utils.video import read_video
 from .environment import EnvironmentCollector
 from .profiler import PipelineProfiler, ProfileSummary
+
+if TYPE_CHECKING:
+    from ..pipeline import MatchPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,7 @@ class BenchmarkRunner:
 
     def profile_pipeline(
         self,
-        pipeline: MatchPipeline,
+        pipeline: "MatchPipeline",
         frames: list[Any],
         profiler: PipelineProfiler,
     ) -> dict[str, Any]:
@@ -256,6 +258,8 @@ class BenchmarkRunner:
         # Split warmup vs profiled frames
         warmup = all_frames[: self.warmup_frames] if self.warmup_frames > 0 else []
         test_frames = all_frames[self.warmup_frames : total_frames_needed]
+
+        from ..pipeline import MatchPipeline
 
         pipeline = MatchPipeline(config)
 
