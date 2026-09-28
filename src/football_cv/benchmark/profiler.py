@@ -110,3 +110,30 @@ class PipelineProfiler:
             throughput_fps=fps,
             stages=stages,
         )
+
+
+def format_profile_summary_table(summary: ProfileSummary) -> str:
+    """Render ProfileSummary into a formatted ASCII table."""
+    lines = [
+        "=========================================================================================",
+        "                     football-cv: Pipeline Latency & Throughput Profile                  ",
+        "=========================================================================================",
+        f"{'Stage Name':<28} | {'Total (s)':<10} | {'ms / frame':<12} | {'% Total':<9}",
+        "-----------------------------------------------------------------------------------------",
+    ]
+    for name, m in summary.stages.items():
+        lines.append(
+            f"{name:<28} | {m.total_seconds:<10.4f} | {m.ms_per_frame:<12.2f} | {m.percent_of_total:<8.2f}%"
+        )
+    lines.append(
+        "-----------------------------------------------------------------------------------------"
+    )
+    lines.append(
+        f"Frames Profiled: {summary.num_frames}  |  "
+        f"Total Duration: {summary.total_duration_seconds:.3f} s  |  "
+        f"Throughput: {summary.throughput_fps:.2f} FPS"
+    )
+    lines.append(
+        "========================================================================================="
+    )
+    return "\n".join(lines)

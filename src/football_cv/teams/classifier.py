@@ -27,7 +27,7 @@ class TeamClassifier:
     def get_clustering_model(self, image: np.ndarray) -> KMeans:
         """Create and fit a 2-cluster K-Means model on image pixels."""
         reshaped = image.reshape((-1, 3))
-        kmeans = KMeans(n_clusters=2, init="k-means++", n_init=10, random_state=42)
+        kmeans = KMeans(n_clusters=2, init="k-means++", n_init=1, random_state=42)
         kmeans.fit(reshaped)
         return kmeans
 
@@ -71,20 +71,25 @@ class TeamClassifier:
 
         color_patch = self._convert_color_space(top_half)
 
-        kmeans = self.get_clustering_model(color_patch)
-        clustered = kmeans.labels_.reshape(color_patch.shape[0], color_patch.shape[1])
+        # High-performance native OpenCV C++ K-Means clustering (sub-millisecond execution)
+        pixels = np.ascontiguousarray(color_patch.reshape(-1, 3), dtype=np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+        _, labels, centers = cv2.kmeans(
+            pixels, 2, None, criteria, 1, cv2.KMEANS_PP_CENTERS
+        )
+        clustered = labels.reshape(color_patch.shape[0], color_patch.shape[1])
 
         # Corner pixels represent background
         corners = [
-            clustered[0, 0],
-            clustered[0, -1],
-            clustered[-1, 0],
-            clustered[-1, -1],
+            int(clustered[0, 0]),
+            int(clustered[0, -1]),
+            int(clustered[-1, 0]),
+            int(clustered[-1, -1]),
         ]
         non_player_cluster = max(set(corners), key=corners.count)
         player_cluster = 1 - non_player_cluster
 
-        return kmeans.cluster_centers_[player_cluster]
+        return centers[player_cluster].astype(float)
 
     def assign_team_color(
         self,

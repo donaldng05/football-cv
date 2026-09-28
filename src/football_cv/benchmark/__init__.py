@@ -7,13 +7,20 @@ from .exporter import BenchmarkExporter
 from .micro import (
     MicroBenchmarkResult,
     benchmark_camera_motion,
+    benchmark_detection_postprocessing,
     benchmark_geometry,
     benchmark_perspective,
     format_micro_benchmark_table,
     run_all_micro_benchmarks,
     save_micro_benchmark_results,
 )
-from .profiler import PipelineProfiler, ProfileSummary, StageMetrics, StageTimer
+from .profiler import (
+    PipelineProfiler,
+    ProfileSummary,
+    StageMetrics,
+    StageTimer,
+    format_profile_summary_table,
+)
 from .runner import BenchmarkReport, BenchmarkRunner, BenchmarkRunResult
 
 __all__ = [
@@ -28,9 +35,11 @@ __all__ = [
     "StageMetrics",
     "StageTimer",
     "benchmark_camera_motion",
+    "benchmark_detection_postprocessing",
     "benchmark_geometry",
     "benchmark_perspective",
     "format_micro_benchmark_table",
+    "format_profile_summary_table",
     "run_all_micro_benchmarks",
     "save_micro_benchmark_results",
 ]

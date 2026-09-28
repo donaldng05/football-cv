@@ -149,55 +149,104 @@ class ObjectDetector:
         return all_detections
 
     def _detect_onnx(self, frames: list[np.ndarray]) -> list[sv.Detections]:
-        """Inference pass using native C++ or Python ONNX Runtime."""
+        """Inference pass using native C++ or Python ONNX Runtime with batch dispatch."""
         all_detections: list[sv.Detections] = []
 
         if self.native_detector is not None:
-            # Native C++ detector path
-            for frame in frames:
-                dets = self.native_detector.detect(
-                    frame, self.confidence, self.nms_threshold
+            # Native C++ detector path with batch dispatch (single GIL release per batch)
+            for i in range(0, len(frames), self.batch_size):
+                batch_frames = frames[i : i + self.batch_size]
+                batch_results = self.native_detector.detect_batch(
+                    batch_frames, self.confidence, self.nms_threshold
                 )
-                if not dets:
-                    all_detections.append(
-                        sv.Detections(
-                            xyxy=np.zeros((0, 4), dtype=np.float32),
-                            confidence=np.zeros((0,), dtype=np.float32),
-                            class_id=np.zeros((0,), dtype=int),
+                for dets in batch_results:
+                    if not dets:
+                        all_detections.append(
+                            sv.Detections(
+                                xyxy=np.zeros((0, 4), dtype=np.float32),
+                                confidence=np.zeros((0,), dtype=np.float32),
+                                class_id=np.zeros((0,), dtype=int),
+                            )
                         )
-                    )
-                    continue
+                        continue
 
-                xyxy = np.array(
-                    [[d.bbox.x1, d.bbox.y1, d.bbox.x2, d.bbox.y2] for d in dets],
-                    dtype=np.float32,
-                )
-                conf = np.array([d.confidence for d in dets], dtype=np.float32)
-                cls_id = np.array([d.class_id for d in dets], dtype=int)
-                all_detections.append(
-                    sv.Detections(xyxy=xyxy, confidence=conf, class_id=cls_id)
-                )
+                    xyxy = np.array(
+                        [[d.bbox.x1, d.bbox.y1, d.bbox.x2, d.bbox.y2] for d in dets],
+                        dtype=np.float32,
+                    )
+                    conf = np.array([d.confidence for d in dets], dtype=np.float32)
+                    cls_id = np.array([d.class_id for d in dets], dtype=int)
+                    all_detections.append(
+                        sv.Detections(xyxy=xyxy, confidence=conf, class_id=cls_id)
+                    )
             return all_detections
 
         # Python onnxruntime fallback path
-        for frame in frames:
-            d = self._detect_single_python_onnx(frame)
-            all_detections.append(d)
+        if self.python_session is None:
+            raise ModelError("ONNX Python session is not initialized")
+
+        input_shape = self.python_session.get_inputs()[0].shape
+        is_dynamic_batch = len(input_shape) > 0 and (
+            isinstance(input_shape[0], str)
+            or input_shape[0] is None
+            or input_shape[0] < 0
+        )
+
+        for i in range(0, len(frames), self.batch_size):
+            batch_frames = frames[i : i + self.batch_size]
+
+            if is_dynamic_batch and len(batch_frames) > 1:
+                # Batched dynamic inference
+                tensors = []
+                transforms = []
+                for frame in batch_frames:
+                    tensor, pad_x, pad_y, inv_r, orig_w, orig_h = (
+                        self._preprocess_letterbox(frame)
+                    )
+                    tensors.append(tensor[0])
+                    transforms.append((pad_x, pad_y, inv_r, orig_w, orig_h))
+
+                batch_input = np.stack(tensors, axis=0)
+                outputs = self.python_session.run(None, {self.input_name: batch_input})
+                preds = outputs[0]  # shape: (B, num_channels, num_anchors)
+
+                for b_idx in range(len(batch_frames)):
+                    pad_x, pad_y, inv_r, orig_w, orig_h = transforms[b_idx]
+                    d = self._postprocess_yolo_tensor(
+                        preds[b_idx], orig_w, orig_h, pad_x, pad_y, inv_r
+                    )
+                    all_detections.append(d)
+            else:
+                # Single-frame inference path (fixed batch-1 models)
+                for frame in batch_frames:
+                    d = self._detect_single_python_onnx(frame)
+                    all_detections.append(d)
 
         return all_detections
 
-    def _detect_single_python_onnx(self, frame: np.ndarray) -> sv.Detections:
-        """Python fallback for single-frame ONNX letterboxing and inference."""
+    @staticmethod
+    def _preprocess_letterbox(
+        frame: np.ndarray, target_w: int = 640, target_h: int = 640
+    ) -> tuple[np.ndarray, float, float, float, int, int]:
+        """
+        Resize and pad frame to target resolution with aspect ratio preserved.
+
+        Returns:
+            Tuple of (NCHW float32 tensor [1, 3, H, W], pad_x, pad_y, inv_r, orig_w, orig_h).
+        """
         import cv2
 
         h, w = frame.shape[:2]
-        r = min(640.0 / w, 640.0 / h)
+        r = min(float(target_w) / w, float(target_h) / h)
         unpad_w, unpad_h = round(w * r), round(h * r)
-        pad_x, pad_y = (640.0 - unpad_w) * 0.5, (640.0 - unpad_h) * 0.5
+        pad_x, pad_y = (
+            (float(target_w) - unpad_w) * 0.5,
+            (float(target_h) - unpad_h) * 0.5,
+        )
         pad_x_int, pad_y_int = round(pad_x), round(pad_y)
 
         resized = cv2.resize(frame, (unpad_w, unpad_h), interpolation=cv2.INTER_LINEAR)
-        canvas = np.full((640, 640, 3), 114, dtype=np.uint8)
+        canvas = np.full((target_h, target_w, 3), 114, dtype=np.uint8)
         canvas[pad_y_int : pad_y_int + unpad_h, pad_x_int : pad_x_int + unpad_w] = (
             resized
         )
@@ -205,40 +254,78 @@ class ObjectDetector:
         rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
         chw = (rgb.astype(np.float32) / 255.0).transpose(2, 0, 1)
         tensor = np.expand_dims(chw, axis=0)
+        return tensor, pad_x, pad_y, 1.0 / r, w, h
 
-        outputs = self.python_session.run(None, {self.input_name: tensor})
-        pred = outputs[0][0]  # shape: (8, 8400)
+    def _postprocess_yolo_tensor(
+        self,
+        pred: np.ndarray,
+        orig_w: int,
+        orig_h: int,
+        pad_x: float,
+        pad_y: float,
+        inv_r: float,
+    ) -> sv.Detections:
+        """
+        Vectorized YOLOv8 anchor decoding and Non-Maximum Suppression.
 
-        boxes, scores, classes = [], [], []
+        Args:
+            pred: Array of shape (num_channels, num_anchors) e.g. (8, 8400).
+            orig_w: Original frame width in pixels.
+            orig_h: Original frame height in pixels.
+            pad_x: Horizontal letterbox padding in pixels.
+            pad_y: Vertical letterbox padding in pixels.
+            inv_r: Inverse letterbox scaling ratio (1 / r).
+
+        Returns:
+            Supervision Detections object filtered by confidence and NMS.
+        """
         num_classes = pred.shape[0] - 4
-        inv_r = 1.0 / r
+        class_scores = pred[4 : 4 + num_classes, :]
+        best_classes = np.argmax(class_scores, axis=0)
+        max_scores = class_scores[best_classes, np.arange(class_scores.shape[1])]
 
-        for i in range(pred.shape[1]):
-            class_scores = pred[4 : 4 + num_classes, i]
-            best_cls = int(np.argmax(class_scores))
-            max_score = float(class_scores[best_cls])
-
-            if max_score >= self.confidence:
-                cx, cy, bw, bh = pred[0, i], pred[1, i], pred[2, i], pred[3, i]
-                x1 = max(0.0, min(float(w), (cx - bw * 0.5 - pad_x) * inv_r))
-                y1 = max(0.0, min(float(h), (cy - bh * 0.5 - pad_y) * inv_r))
-                x2 = max(0.0, min(float(w), (cx + bw * 0.5 - pad_x) * inv_r))
-                y2 = max(0.0, min(float(h), (cy + bh * 0.5 - pad_y) * inv_r))
-                if x2 > x1 and y2 > y1:
-                    boxes.append([x1, y1, x2, y2])
-                    scores.append(max_score)
-                    classes.append(best_cls)
-
-        if not boxes:
+        mask = max_scores >= self.confidence
+        if not np.any(mask):
             return sv.Detections(
                 xyxy=np.zeros((0, 4), dtype=np.float32),
                 confidence=np.zeros((0,), dtype=np.float32),
                 class_id=np.zeros((0,), dtype=int),
             )
 
+        sub_pred = pred[:4, mask]
+        cx, cy, bw, bh = sub_pred[0], sub_pred[1], sub_pred[2], sub_pred[3]
+        half_w = bw * 0.5
+        half_h = bh * 0.5
+
+        x1 = np.clip((cx - half_w - pad_x) * inv_r, 0.0, float(orig_w))
+        y1 = np.clip((cy - half_h - pad_y) * inv_r, 0.0, float(orig_h))
+        x2 = np.clip((cx + half_w - pad_x) * inv_r, 0.0, float(orig_w))
+        y2 = np.clip((cy + half_h - pad_y) * inv_r, 0.0, float(orig_h))
+
+        valid = (x2 > x1) & (y2 > y1)
+        if not np.any(valid):
+            return sv.Detections(
+                xyxy=np.zeros((0, 4), dtype=np.float32),
+                confidence=np.zeros((0,), dtype=np.float32),
+                class_id=np.zeros((0,), dtype=int),
+            )
+
+        boxes = np.stack([x1[valid], y1[valid], x2[valid], y2[valid]], axis=-1).astype(
+            np.float32
+        )
+        scores = max_scores[mask][valid].astype(np.float32)
+        classes = best_classes[mask][valid].astype(int)
+
         raw_dets = sv.Detections(
-            xyxy=np.array(boxes, dtype=np.float32),
-            confidence=np.array(scores, dtype=np.float32),
-            class_id=np.array(classes, dtype=int),
+            xyxy=boxes,
+            confidence=scores,
+            class_id=classes,
         )
         return raw_dets.with_nms(threshold=self.nms_threshold)
+
+    def _detect_single_python_onnx(self, frame: np.ndarray) -> sv.Detections:
+        """Python fallback for single-frame ONNX letterboxing and inference."""
+        tensor, pad_x, pad_y, inv_r, orig_w, orig_h = self._preprocess_letterbox(frame)
+        outputs = self.python_session.run(None, {self.input_name: tensor})
+        pred = outputs[0][0]  # shape: (8, 8400)
+        return self._postprocess_yolo_tensor(pred, orig_w, orig_h, pad_x, pad_y, inv_r)

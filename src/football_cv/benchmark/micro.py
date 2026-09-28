@@ -490,6 +490,90 @@ def benchmark_camera_motion(
     return results
 
 
+def benchmark_detection_postprocessing(
+    iterations: int = 50,
+) -> list[MicroBenchmarkResult]:
+    """
+    Benchmark scalar interpreted Python loop vs vectorized NumPy anchor decoding.
+    """
+    results: list[MicroBenchmarkResult] = []
+
+    # Synthesize YOLOv8 raw prediction tensor (8 channels: 4 bbox coords + 4 class scores, 8400 anchors)
+    rng = np.random.default_rng(42)
+    pred = rng.standard_normal((8, 8400)).astype(np.float32)
+    pred[2:4, :] = np.abs(pred[2:4, :]) * 50.0 + 10.0
+    pred[0:2, :] = np.abs(pred[0:2, :]) * 300.0 + 50.0
+    pred[4:8, :50] = rng.uniform(0.6, 0.95, (4, 50)).astype(np.float32)
+
+    confidence = 0.25
+    orig_w, orig_h = 1920, 1080
+    pad_x, pad_y = 0.0, 0.0
+    inv_r = 1.0
+    num_classes = 4
+
+    def run_scalar_postprocess():
+        boxes, scores, classes = [], [], []
+        for i in range(pred.shape[1]):
+            class_scores = pred[4 : 4 + num_classes, i]
+            best_cls = int(np.argmax(class_scores))
+            max_score = float(class_scores[best_cls])
+            if max_score >= confidence:
+                cx, cy, bw, bh = pred[0, i], pred[1, i], pred[2, i], pred[3, i]
+                x1 = max(0.0, min(float(orig_w), (cx - bw * 0.5 - pad_x) * inv_r))
+                y1 = max(0.0, min(float(orig_h), (cy - bh * 0.5 - pad_y) * inv_r))
+                x2 = max(0.0, min(float(orig_w), (cx + bw * 0.5 - pad_x) * inv_r))
+                y2 = max(0.0, min(float(orig_h), (cy + bh * 0.5 - pad_y) * inv_r))
+                if x2 > x1 and y2 > y1:
+                    boxes.append([x1, y1, x2, y2])
+                    scores.append(max_score)
+                    classes.append(best_cls)
+        return boxes
+
+    def run_vectorized_postprocess():
+        class_scores = pred[4 : 4 + num_classes, :]
+        best_classes = np.argmax(class_scores, axis=0)
+        max_scores = class_scores[best_classes, np.arange(class_scores.shape[1])]
+        mask = max_scores >= confidence
+        if not np.any(mask):
+            return []
+        sub_pred = pred[:4, mask]
+        cx, cy, bw, bh = sub_pred[0], sub_pred[1], sub_pred[2], sub_pred[3]
+        half_w = bw * 0.5
+        half_h = bh * 0.5
+        x1 = np.clip((cx - half_w - pad_x) * inv_r, 0.0, float(orig_w))
+        y1 = np.clip((cy - half_h - pad_y) * inv_r, 0.0, float(orig_h))
+        x2 = np.clip((cx + half_w - pad_x) * inv_r, 0.0, float(orig_w))
+        y2 = np.clip((cy + half_h - pad_y) * inv_r, 0.0, float(orig_h))
+        valid = (x2 > x1) & (y2 > y1)
+        if not np.any(valid):
+            return []
+        boxes = np.stack([x1[valid], y1[valid], x2[valid], y2[valid]], axis=-1)
+        return boxes
+
+    py_lat, py_ops = _time_callable(
+        run_scalar_postprocess, iterations=iterations, warmup=5
+    )
+    vec_lat, vec_ops = _time_callable(
+        run_vectorized_postprocess, iterations=iterations, warmup=5
+    )
+    speedup = round(py_lat / max(1e-4, vec_lat), 2)
+
+    results.append(
+        MicroBenchmarkResult(
+            name="onnx_yolo_anchor_decoding",
+            category="Inference Postprocessing",
+            iterations=iterations,
+            python_latency_us=py_lat,
+            cpp_latency_us=vec_lat,
+            speedup=speedup,
+            python_throughput_ops=py_ops,
+            cpp_throughput_ops=vec_ops,
+            description="8,400 YOLO anchor boxes decoding (scalar loop vs vectorized NumPy)",
+        )
+    )
+    return results
+
+
 def run_all_micro_benchmarks(scale: float = 1.0) -> dict[str, Any]:
     """
     Execute full micro-benchmark suite across all kernel categories.
@@ -512,12 +596,14 @@ def run_all_micro_benchmarks(scale: float = 1.0) -> dict[str, Any]:
     geo_iters = max(100, int(100_000 * scale))
     persp_iters = max(100, int(20_000 * scale))
     cam_iters = max(50, int(2_000 * scale))
+    det_iters = max(10, int(50 * scale))
 
     geo_results = benchmark_geometry(iterations=geo_iters)
     persp_results = benchmark_perspective(iterations=persp_iters)
     cam_results = benchmark_camera_motion(iterations=cam_iters)
+    det_results = benchmark_detection_postprocessing(iterations=det_iters)
 
-    all_results = geo_results + persp_results + cam_results
+    all_results = geo_results + persp_results + cam_results + det_results
 
     return {
         "timestamp_utc": datetime.now(UTC).isoformat(),
