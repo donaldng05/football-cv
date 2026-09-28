@@ -100,9 +100,7 @@ class PerspectiveTransformer:
 
         if camera_matrix is None:
             is_inside = (
-                cv2.pointPolygonTest(
-                    self.pixel_vertices, (int(pt_x), int(pt_y)), False
-                )
+                cv2.pointPolygonTest(self.pixel_vertices, (int(pt_x), int(pt_y)), False)
                 >= 0
             )
         else:
@@ -184,4 +182,3 @@ class PerspectiveTransformer:
 
 # Alias for backward compatibility
 ViewTransformer = PerspectiveTransformer
-

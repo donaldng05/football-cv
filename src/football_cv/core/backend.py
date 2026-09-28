@@ -324,7 +324,9 @@ class CppCameraMotionEstimatorAdapter:
                     affine_mat, inliers = cv2.estimateAffinePartial2D(
                         good_new, good_old, method=cv2.RANSAC, ransacReprojThreshold=3.0
                     )
-                    if affine_mat is not None and (inliers is None or np.sum(inliers) >= 3):
+                    if affine_mat is not None and (
+                        inliers is None or np.sum(inliers) >= 3
+                    ):
                         h_step[:2, :] = affine_mat.astype(np.float32)
                     else:
                         h_step[0, 2] = float(cam_dx)
@@ -521,7 +523,9 @@ class CppCameraMotionEstimatorAdapter:
                     affine_mat, inliers = cv2.estimateAffinePartial2D(
                         good_new, good_old, method=cv2.RANSAC, ransacReprojThreshold=3.0
                     )
-                    if affine_mat is not None and (inliers is None or np.sum(inliers) >= 3):
+                    if affine_mat is not None and (
+                        inliers is None or np.sum(inliers) >= 3
+                    ):
                         h_step[:2, :] = affine_mat.astype(np.float32)
                     else:
                         h_step[0, 2] = float(cam_dx)

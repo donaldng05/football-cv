@@ -433,7 +433,9 @@ class CameraMotionEstimator:
                         ):
                             cam_dx, cam_dy = dx, dy
                         elif med_dist > self.minimum_distance:
-                            best_idx = int(np.argmin([abs(d - med_dist) for d in dists]))
+                            best_idx = int(
+                                np.argmin([abs(d - med_dist) for d in dists])
+                            )
                             cam_dx, cam_dy = dxs[best_idx], dys[best_idx]
 
                     h_step = self._estimate_inter_frame_matrix(
@@ -444,17 +446,13 @@ class CameraMotionEstimator:
                 camera_movement.append((0.0, 0.0))
                 cum_matrix = np.eye(3, dtype=np.float32)
                 camera_matrices.append(cum_matrix.copy())
-                old_features = cv2.goodFeaturesToTrack(
-                    frame_gray, **self.features
-                )
+                old_features = cv2.goodFeaturesToTrack(frame_gray, **self.features)
             else:
                 camera_movement.append((cam_dx, cam_dy))
                 cum_matrix = cum_matrix @ h_step
                 camera_matrices.append(cum_matrix.copy())
                 if cam_dx != 0.0 or cam_dy != 0.0:
-                    old_features = cv2.goodFeaturesToTrack(
-                        frame_gray, **self.features
-                    )
+                    old_features = cv2.goodFeaturesToTrack(frame_gray, **self.features)
 
             old_gray = frame_gray
 

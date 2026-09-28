@@ -32,7 +32,9 @@ class TestCameraMotionGeometry:
     def test_inter_frame_matrix_pure_translation(self):
         # 10 points shifted by dx=15, dy=-5
         pts_old = np.random.uniform(100, 500, (10, 2)).astype(np.float32)
-        pts_new = pts_old + np.array([-15.0, 5.0], dtype=np.float32)  # new -> old has dx=15, dy=-5
+        pts_new = pts_old + np.array(
+            [-15.0, 5.0], dtype=np.float32
+        )  # new -> old has dx=15, dy=-5
 
         h = CameraMotionEstimator._estimate_inter_frame_matrix(
             pts_new, pts_old, cam_dx=15.0, cam_dy=-5.0, is_cut=False
@@ -129,7 +131,9 @@ class TestPerspectiveProjectionGeometry:
         h_1_to_0 = np.eye(3, dtype=np.float32)
         h_1_to_0[0, 2] = 50.0  # maps p1 back to p0
 
-        metric_pos_1 = calibrated_transformer.transform_point(p1, camera_matrix=h_1_to_0)
+        metric_pos_1 = calibrated_transformer.transform_point(
+            p1, camera_matrix=h_1_to_0
+        )
         assert metric_pos_1 is not None
 
         # Transformed metric position should match frame 0 within numerical tolerance
@@ -140,7 +144,9 @@ class TestPerspectiveProjectionGeometry:
         singular_matrix = np.array(
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -100.0, 0.0]], dtype=np.float32
         )
-        res = calibrated_transformer.transform_point([500.0, 500.0], camera_matrix=singular_matrix)
+        res = calibrated_transformer.transform_point(
+            [500.0, 500.0], camera_matrix=singular_matrix
+        )
         assert res is None
 
     def test_transform_points_batch_parity(self, calibrated_transformer):
