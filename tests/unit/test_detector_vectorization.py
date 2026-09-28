@@ -2,7 +2,9 @@
 Unit tests for vectorized YOLOv8 anchor decoding, ONNX batch inference, and pipeline profiling.
 """
 
+import importlib.util
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -15,6 +17,7 @@ from football_cv.benchmark.profiler import (
     format_profile_summary_table,
 )
 from football_cv.config import load_config
+from football_cv.core import has_cpp_core
 from football_cv.pipeline import MatchPipeline
 from football_cv.tracking.detector import ObjectDetector
 
@@ -24,13 +27,34 @@ class TestDetectorVectorization:
 
     @pytest.fixture
     def detector(self) -> ObjectDetector:
+        detector = ObjectDetector.__new__(ObjectDetector)
+        detector.confidence = 0.25
+        detector.nms_threshold = 0.50
+        detector.batch_size = 4
+        detector.engine = "onnx"
+        detector.native_detector = None
+        detector.input_name = "images"
+
+        mock_session = MagicMock()
+        mock_input = MagicMock()
+        mock_input.shape = [1, 3, 640, 640]
+        mock_session.get_inputs.return_value = [mock_input]
+        mock_session.run.return_value = [np.zeros((1, 8, 8400), dtype=np.float32)]
+        detector.python_session = mock_session
+        return detector
+
+    def test_live_onnx_detector_initialization_if_available(self) -> None:
+        """Verify live ONNX detector initialization when native C++ or onnxruntime is available."""
+        if not has_cpp_core() and importlib.util.find_spec("onnxruntime") is None:
+            pytest.skip("Neither native C++ _core nor onnxruntime is available")
+
         detector = ObjectDetector(
             model_path="models/best.onnx",
             engine="onnx",
             confidence=0.25,
             batch_size=4,
         )
-        return detector
+        assert detector.engine == "onnx"
 
     def test_preprocess_letterbox_dimensions(self) -> None:
         """Verify letterbox output shape and normalization for 1080p frame."""
