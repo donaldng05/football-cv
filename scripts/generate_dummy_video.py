@@ -42,10 +42,18 @@ def generate_dummy_video(
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(target), fourcc, fps, (width, height))
 
-    # Generate a lightweight green pitch backdrop frame
-    frame = np.full((height, width, 3), fill_value=(40, 120, 40), dtype=np.uint8)
-
-    for _ in range(num_frames):
+    # Generate green pitch backdrop frames with a synthetic detectable player entity
+    # to ensure detection and tracking verification succeed in CI environments.
+    for i in range(num_frames):
+        frame = np.full((height, width, 3), fill_value=(40, 120, 40), dtype=np.uint8)
+        x_offset = int((i % 100) * 2)
+        cv2.rectangle(
+            frame,
+            (500 + x_offset, 300),
+            (550 + x_offset, 450),
+            (255, 0, 0),
+            -1,
+        )
         writer.write(frame)
 
     writer.release()

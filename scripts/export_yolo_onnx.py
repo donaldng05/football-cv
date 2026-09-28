@@ -23,6 +23,7 @@ def export_model(
     device: str = "cpu",
     half: bool = False,
     simplify: bool = True,
+    dynamic: bool = True,
 ) -> Path:
     """
     Export YOLO checkpoint to ONNX format.
@@ -35,6 +36,7 @@ def export_model(
         device: Device to export on ('cpu' or 'cuda').
         half: Export FP16 half precision.
         simplify: Run onnx-simplifier if available.
+        dynamic: Enable dynamic batch axes for batched inference.
 
     Returns:
         Path to exported and verified ONNX model file.
@@ -50,7 +52,7 @@ def export_model(
     logger.info(f"Loaded YOLO task='{model.task}', classes={model.names}")
 
     logger.info(
-        f"Exporting to ONNX (imgsz={imgsz}, opset={opset}, device='{device}', simplify={simplify})..."
+        f"Exporting to ONNX (imgsz={imgsz}, opset={opset}, device='{device}', simplify={simplify}, dynamic={dynamic})..."
     )
     exported_file = model.export(
         format="onnx",
@@ -59,7 +61,7 @@ def export_model(
         device=device,
         half=half,
         simplify=simplify,
-        dynamic=False,
+        dynamic=dynamic,
     )
 
     exported_p = Path(exported_file)
@@ -104,10 +106,13 @@ def export_model(
     import onnxruntime as ort
 
     session = ort.InferenceSession(str(exported_p), providers=["CPUExecutionProvider"])
-    dummy_input = np.zeros((1, 3, imgsz, imgsz), dtype=np.float32)
+    smoke_batch = 2 if dynamic else 1
+    dummy_input = np.zeros((smoke_batch, 3, imgsz, imgsz), dtype=np.float32)
     input_name = session.get_inputs()[0].name
     outputs = session.run(None, {input_name: dummy_input})
-    logger.info(f"Inference smoke test passed. Output tensor shape: {outputs[0].shape}")
+    logger.info(
+        f"Inference smoke test passed (batch={smoke_batch}). Output tensor shape: {outputs[0].shape}"
+    )
 
     return exported_p
 
@@ -146,6 +151,12 @@ def main() -> int:
         default="cpu",
         help="Device to export with ('cpu' or 'cuda', default: 'cpu')",
     )
+    parser.add_argument(
+        "--dynamic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Export with dynamic batch axes for batched inference (default: True)",
+    )
 
     args = parser.parse_args()
 
@@ -156,6 +167,7 @@ def main() -> int:
             imgsz=args.imgsz,
             opset=args.opset,
             device=args.device,
+            dynamic=args.dynamic,
         )
         print(f"\n[PASS] Model successfully exported and verified: {out_path}\n")
         return 0

@@ -186,27 +186,24 @@ class ObjectDetector:
             raise ModelError("ONNX Python session is not initialized")
 
         input_shape = self.python_session.get_inputs()[0].shape
-        is_dynamic_batch = len(input_shape) > 0 and (
-            isinstance(input_shape[0], str)
-            or input_shape[0] is None
-            or input_shape[0] < 0
+        input_dim0 = input_shape[0] if len(input_shape) > 0 else 1
+        is_dynamic_batch = (
+            isinstance(input_dim0, str)
+            or input_dim0 is None
+            or (isinstance(input_dim0, int) and input_dim0 < 0)
         )
 
         for i in range(0, len(frames), self.batch_size):
             batch_frames = frames[i : i + self.batch_size]
+            can_batch = (is_dynamic_batch and len(batch_frames) > 1) or (
+                isinstance(input_dim0, int)
+                and input_dim0 == len(batch_frames)
+                and len(batch_frames) > 1
+            )
 
-            if is_dynamic_batch and len(batch_frames) > 1:
+            if can_batch:
                 # Batched dynamic inference
-                tensors = []
-                transforms = []
-                for frame in batch_frames:
-                    tensor, pad_x, pad_y, inv_r, orig_w, orig_h = (
-                        self._preprocess_letterbox(frame)
-                    )
-                    tensors.append(tensor[0])
-                    transforms.append((pad_x, pad_y, inv_r, orig_w, orig_h))
-
-                batch_input = np.stack(tensors, axis=0)
+                batch_input, transforms = self._preprocess_batch_letterbox(batch_frames)
                 outputs = self.python_session.run(None, {self.input_name: batch_input})
                 preds = outputs[0]  # shape: (B, num_channels, num_anchors)
 
@@ -223,6 +220,26 @@ class ObjectDetector:
                     all_detections.append(d)
 
         return all_detections
+
+    @classmethod
+    def _preprocess_batch_letterbox(
+        cls, frames: list[np.ndarray], target_w: int = 640, target_h: int = 640
+    ) -> tuple[np.ndarray, list[tuple[float, float, float, int, int]]]:
+        """
+        Batch preprocess multiple frames into a contiguous NCHW float32 tensor [B, 3, H, W].
+        """
+        b = len(frames)
+        batch_tensor = np.empty((b, 3, target_h, target_w), dtype=np.float32)
+        transforms: list[tuple[float, float, float, int, int]] = []
+
+        for i, frame in enumerate(frames):
+            tensor, pad_x, pad_y, inv_r, orig_w, orig_h = cls._preprocess_letterbox(
+                frame, target_w=target_w, target_h=target_h
+            )
+            batch_tensor[i] = tensor[0]
+            transforms.append((pad_x, pad_y, inv_r, orig_w, orig_h))
+
+        return batch_tensor, transforms
 
     @staticmethod
     def _preprocess_letterbox(

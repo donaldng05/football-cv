@@ -593,3 +593,17 @@ class TestBackendParityIntegration:
         cpp_mov = cpp_est.get_camera_movement(frames)
 
         assert py_mov == cpp_mov == [(0.0, 0.0), (0.0, 0.0)]
+
+    def test_factory_perspective_transformer_batch_parity(self):
+        """Factory outputs for 'python' and 'cpp' backends must yield identical batch projections."""
+        py_tf = get_perspective_transformer(backend="python")
+        cpp_tf = get_perspective_transformer(backend="cpp")
+
+        pts = np.array(
+            [[250.0, 300.0], [500.0, 450.0], [800.0, 600.0]], dtype=np.float32
+        )
+        py_res = py_tf.transform_points_batch(pts)
+        cpp_res = cpp_tf.transform_points_batch(pts)
+
+        assert py_res.shape == cpp_res.shape == (3, 2)
+        np.testing.assert_allclose(py_res, cpp_res, atol=1e-5)

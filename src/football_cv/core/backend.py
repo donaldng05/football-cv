@@ -166,6 +166,33 @@ class CppPerspectiveTransformerAdapter:
             ty = float(np.clip(ty, 0.0, self.court_length))
         return np.array([[tx, ty]], dtype=np.float32)
 
+    def transform_points_batch(
+        self,
+        points: np.ndarray,
+        camera_matrix: np.ndarray | None = None,
+        out_of_bounds_policy: str | None = None,
+    ) -> np.ndarray:
+        """
+        Vectorized transformation of an (N, 2) array of pixel coordinates to metric pitch coordinates.
+        """
+        if points.size == 0:
+            return np.zeros((0, 2), dtype=np.float32)
+
+        import cv2
+
+        pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+        h_eff = self.get_effective_homography(camera_matrix)
+
+        reshaped = pts.reshape(-1, 1, 2)
+        transformed = cv2.perspectiveTransform(reshaped, h_eff).reshape(-1, 2)
+
+        policy = (out_of_bounds_policy or self.out_of_bounds_policy).lower()
+        if policy == "clip":
+            transformed[:, 0] = np.clip(transformed[:, 0], 0.0, self.court_width)
+            transformed[:, 1] = np.clip(transformed[:, 1], 0.0, self.court_length)
+
+        return transformed
+
     def add_transformed_position_to_tracks(
         self,
         tracks: dict[str, Any],

@@ -109,7 +109,7 @@ Benchmarking is automated via GitHub Actions in `.github/workflows/benchmark.yml
 4. **Drawing & Visual Overlays (9.08% of latency):**
    Rendering bounding boxes, player speed badges, and possession indicators directly onto 1080p frames takes ~9.3 ms/frame.
 5. **Geometry, Homography & Analytics (< 0.1% of latency):**
-   Mathematical operations (Euclidean distance, bounding box centers, 4-point homography projection) execute in microseconds per frame. While migrating geometry to C++ (Phase 2 Component A & B) will not drastically shift end-to-end FPS, it provides the essential, testable foundation for typed C++ data structures (`Point2D`, `BoundingBox`, `PerspectiveTransformer`) and validates pybind11 interoperability without architectural complexity.
+   Mathematical operations (Euclidean distance, bounding box centers, 4-point homography projection) execute in microseconds per frame (0.04 ms/frame). Per Amdahl's Law, optimizing the 0.04% perspective transform stage in isolation yields virtually zero end-to-end acceleration. Furthermore, invoking scalar C++ bindings across the pybind11 FFI boundary point-by-point incurs non-trivial GIL acquisition and NumPy array allocation overhead. Real acceleration requires batched vectorization across the primary 60.91% `detection_and_tracking` bottleneck.
 
 ---
 

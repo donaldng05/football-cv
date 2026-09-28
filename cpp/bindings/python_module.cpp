@@ -397,6 +397,7 @@ PYBIND11_MODULE(_core, m) {
         .def_property_readonly("input_width", &OnnxDetector::input_width)
         .def_property_readonly("input_height", &OnnxDetector::input_height)
         .def_property_readonly("num_classes", &OnnxDetector::num_classes)
+        .def_property_readonly("is_dynamic_batch", &OnnxDetector::is_dynamic_batch)
         .def_property_readonly("model_path", &OnnxDetector::model_path);
 #endif
 }

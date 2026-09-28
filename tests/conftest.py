@@ -23,8 +23,16 @@ def _generate_synthetic_video(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-    frame = np.full((height, width, 3), fill_value=(40, 120, 40), dtype=np.uint8)
-    for _ in range(num_frames):
+    for i in range(num_frames):
+        frame = np.full((height, width, 3), fill_value=(40, 120, 40), dtype=np.uint8)
+        x_offset = int((i % 100) * 2)
+        cv2.rectangle(
+            frame,
+            (500 + x_offset, 300),
+            (550 + x_offset, 450),
+            (255, 0, 0),
+            -1,
+        )
         writer.write(frame)
     writer.release()
 
