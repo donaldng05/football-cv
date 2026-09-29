@@ -14,10 +14,18 @@ from .exceptions import ConfigurationError
 @dataclass
 class ModelConfig:
     path: str = "models/best.pt"
-    confidence: float = 0.10
+    confidence: float = 0.25
     device: str = "auto"
     batch_size: int = 20
     engine: str = "ultralytics"  # "ultralytics" | "onnx"
+    class_confidences: dict[str, float] = field(
+        default_factory=lambda: {
+            "player": 0.25,
+            "goalkeeper": 0.25,
+            "referee": 0.25,
+            "ball": 0.12,
+        }
+    )
 
     def validate(self) -> None:
         if not (0.0 <= self.confidence <= 1.0):
@@ -33,6 +41,12 @@ class ModelConfig:
             raise ConfigurationError(
                 f"Invalid model engine '{self.engine}'. Must be one of {valid_engines}"
             )
+        if self.class_confidences is not None:
+            for cls_name, conf_val in self.class_confidences.items():
+                if not (0.0 <= conf_val <= 1.0):
+                    raise ConfigurationError(
+                        f"class_confidences for '{cls_name}' must be in range [0.0, 1.0], got {conf_val}"
+                    )
 
 
 @dataclass

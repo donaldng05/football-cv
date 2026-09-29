@@ -5,10 +5,15 @@
 
 model:
   path: "models/best.pt"
-  confidence: 0.15
+  confidence: 0.30
   device: "cuda"
   batch_size: 32
   engine: "ultralytics" # "ultralytics" | "onnx"
+  class_confidences:
+    player: 0.30
+    goalkeeper: 0.30
+    referee: 0.30
+    ball: 0.15
 
 video:
   input_path: "input_videos/08fd33_4.mp4"
