@@ -139,6 +139,9 @@ class MovementConfig:
     speed_window_frames: int = 5
     minimum_displacement: float = 0.0
     method: str = "rolling"
+    max_speed_kmh: float = 38.0
+    enable_smoothing: bool = True
+    min_speed_mps: float = 0.5
 
     def validate(self) -> None:
         if self.speed_window_frames < 1:
@@ -153,6 +156,14 @@ class MovementConfig:
         if self.method.lower() not in valid_methods:
             raise ConfigurationError(
                 f"Invalid movement method '{self.method}'. Must be one of {valid_methods}"
+            )
+        if self.max_speed_kmh <= 0:
+            raise ConfigurationError(
+                f"max_speed_kmh must be > 0, got {self.max_speed_kmh}"
+            )
+        if self.min_speed_mps < 0:
+            raise ConfigurationError(
+                f"min_speed_mps must be >= 0, got {self.min_speed_mps}"
             )
 
 
