@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
+import numpy as np
+
 from ..possession.events import PossessionInterval
 
 
@@ -64,12 +66,16 @@ class EventBuilder:
         validate_kinematics: bool = True,
         maximum_pass_speed: float = 45.0,
         minimum_track_swap_distance: float = 1.5,
+        min_pass_distance: float = 2.0,
+        min_trajectory_alignment_cosine: float = 0.50,
     ):
         self.maximum_transition_frames = max(1, maximum_transition_frames)
         self.fps = fps if fps > 0 else 25.0
         self.validate_kinematics = validate_kinematics
         self.maximum_pass_speed = maximum_pass_speed
         self.minimum_track_swap_distance = minimum_track_swap_distance
+        self.min_pass_distance = min_pass_distance
+        self.min_trajectory_alignment_cosine = min_trajectory_alignment_cosine
 
     @staticmethod
     def _extract_coords(
@@ -97,6 +103,7 @@ class EventBuilder:
         self,
         intervals: list[PossessionInterval],
         player_tracks: list[dict[int, dict[str, Any]]],
+        ball_tracks: list[dict[int, dict[str, Any]]] | None = None,
     ) -> list[CandidateEvent]:
         """
         Infer tactical candidate events between consecutive possession intervals.
@@ -104,6 +111,7 @@ class EventBuilder:
         Args:
             intervals: Chronologically ordered list of possession intervals.
             player_tracks: Frame-indexed player tracking dictionaries.
+            ball_tracks: Optional frame-indexed ball tracking dictionaries for trajectory validation.
 
         Returns:
             List of classified CandidateEvent instances.
@@ -183,6 +191,71 @@ class EventBuilder:
                     # Implausible superhuman speed (> 45 m/s) indicates tracking teleportation/jump
                     event_type = EventType.UNCERTAIN_TRANSITION.value
                     confidence = 0.40
+                elif transition_frames > 2 and displacement < self.min_pass_distance:
+                    # Players virtually in same spot with delayed transition is not a real pass
+                    event_type = EventType.EXCLUDED.value
+                    confidence = 0.85
+
+            # Ball trajectory vector alignment & continuity check
+            if ball_tracks is not None and event_type == EventType.CANDIDATE_PASS.value:
+                ball_positions: list[tuple[int, float, float]] = []
+                for f in range(start_frame, min(end_frame + 1, len(ball_tracks))):
+                    b_dict = ball_tracks[f]
+                    b_info = b_dict.get(1, {})
+                    b_pos = b_info.get("position_transformed")
+                    if b_pos is not None and len(b_pos) >= 2:
+                        ball_positions.append((f, float(b_pos[0]), float(b_pos[1])))
+
+                expected_span = max(1, end_frame - start_frame)
+                if expected_span >= 4 and len(ball_positions) < 0.30 * expected_span:
+                    # Ball missing throughout majority of transition
+                    event_type = EventType.UNCERTAIN_TRANSITION.value
+                    confidence = 0.45
+                elif len(ball_positions) >= 2 and sx_p is not None and ex_p is not None:
+                    p_vec = np.array([ex_p - sx_p, ey_p - sy_p], dtype=np.float64)
+                    b_vec = np.array(
+                        [
+                            ball_positions[-1][1] - ball_positions[0][1],
+                            ball_positions[-1][2] - ball_positions[0][2],
+                        ],
+                        dtype=np.float64,
+                    )
+                    p_norm = float(np.linalg.norm(p_vec))
+                    b_norm = float(np.linalg.norm(b_vec))
+
+                    if p_norm > 1.0 and b_norm > 1.0:
+                        cos_sim = float(np.dot(p_vec, b_vec) / (p_norm * b_norm))
+                        if cos_sim < self.min_trajectory_alignment_cosine:
+                            # Ball traveled divergent from receiver (clearance, deflection, shot)
+                            event_type = EventType.LOOSE_BALL.value
+                            confidence = 0.65
+
+                    # Check for mid-transition sharp deflection (rebound off post or keeper)
+                    if (
+                        len(ball_positions) >= 3
+                        and event_type == EventType.CANDIDATE_PASS.value
+                    ):
+                        for i in range(2, len(ball_positions)):
+                            v1 = np.array(
+                                [
+                                    ball_positions[i - 1][1] - ball_positions[i - 2][1],
+                                    ball_positions[i - 1][2] - ball_positions[i - 2][2],
+                                ]
+                            )
+                            v2 = np.array(
+                                [
+                                    ball_positions[i][1] - ball_positions[i - 1][1],
+                                    ball_positions[i][2] - ball_positions[i - 1][2],
+                                ]
+                            )
+                            nv1 = float(np.linalg.norm(v1))
+                            nv2 = float(np.linalg.norm(v2))
+                            if nv1 > 0.5 and nv2 > 0.5:
+                                dot_turn = float(np.dot(v1, v2) / (nv1 * nv2))
+                                if dot_turn < -0.5:  # > 120 degree abrupt turnaround
+                                    event_type = EventType.LOOSE_BALL.value
+                                    confidence = 0.70
+                                    break
 
             # Downgrade if spatial coordinates are uncalibrated / off-pitch
             if sx_p is None or ex_p is None:
