@@ -32,6 +32,9 @@ jobs:
       - name: Ensure Test Video Asset
         run: python scripts/generate_dummy_video.py
 
+      - name: Ensure Test Model Asset
+        run: python scripts/download_models.py --dummy
+
       - name: Run Benchmark Profiler
         run: |
           FRAMES="${{ github.event.inputs.num_frames || '50' }}"
