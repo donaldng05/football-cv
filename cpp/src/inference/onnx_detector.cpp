@@ -207,13 +207,19 @@ std::vector<Detection> OnnxDetector::postprocess(
     int orig_w,
     int orig_h,
     float confidence_threshold,
-    float nms_threshold
+    float nms_threshold,
+    const std::vector<float>& class_thresholds
 ) {
     std::vector<Detection> candidates;
     candidates.reserve(128);
 
     const int classes = static_cast<int>(num_channels - 4);
     const float inv_scale = 1.0f / scale;
+
+    const bool has_class_thresholds = !class_thresholds.empty();
+    const float min_global_threshold = has_class_thresholds
+        ? *std::min_element(class_thresholds.begin(), class_thresholds.end())
+        : confidence_threshold;
 
     // Output tensor shape is [1, 8, 8400]
     // output_data[channel * num_anchors + anchor_idx]
@@ -229,7 +235,15 @@ std::vector<Detection> OnnxDetector::postprocess(
             }
         }
 
-        if (max_score >= confidence_threshold) {
+        if (max_score < min_global_threshold) {
+            continue;
+        }
+
+        const float thresh = (has_class_thresholds && best_cls >= 0 && static_cast<size_t>(best_cls) < class_thresholds.size())
+            ? class_thresholds[best_cls]
+            : confidence_threshold;
+
+        if (max_score >= thresh) {
             const float cx = output_data[0 * num_anchors + i];
             const float cy = output_data[1 * num_anchors + i];
             const float w = output_data[2 * num_anchors + i];
@@ -288,7 +302,8 @@ std::vector<Detection> OnnxDetector::detect(
     int width,
     int height,
     float confidence_threshold,
-    float nms_threshold
+    float nms_threshold,
+    const std::vector<float>& class_thresholds
 ) {
     if (!bgr_data || width <= 0 || height <= 0) {
         return {};
@@ -342,8 +357,19 @@ std::vector<Detection> OnnxDetector::detect(
         width,
         height,
         confidence_threshold,
-        nms_threshold
+        nms_threshold,
+        class_thresholds
     );
+}
+
+std::vector<Detection> OnnxDetector::detect(
+    const uint8_t* bgr_data,
+    int width,
+    int height,
+    const std::vector<float>& class_thresholds,
+    float nms_threshold
+) {
+    return detect(bgr_data, width, height, 0.10f, nms_threshold, class_thresholds);
 }
 
 std::vector<std::vector<Detection>> OnnxDetector::detect_batch(
@@ -351,7 +377,8 @@ std::vector<std::vector<Detection>> OnnxDetector::detect_batch(
     int width,
     int height,
     float confidence_threshold,
-    float nms_threshold
+    float nms_threshold,
+    const std::vector<float>& class_thresholds
 ) {
     if (frames_data.empty() || width <= 0 || height <= 0) {
         return {};
@@ -363,7 +390,7 @@ std::vector<std::vector<Detection>> OnnxDetector::detect_batch(
         std::vector<std::vector<Detection>> results;
         results.reserve(batch_size);
         for (const auto* frame : frames_data) {
-            results.push_back(detect(frame, width, height, confidence_threshold, nms_threshold));
+            results.push_back(detect(frame, width, height, confidence_threshold, nms_threshold, class_thresholds));
         }
         return results;
     }
@@ -429,11 +456,22 @@ std::vector<std::vector<Detection>> OnnxDetector::detect_batch(
             width,
             height,
             confidence_threshold,
-            nms_threshold
+            nms_threshold,
+            class_thresholds
         ));
     }
 
     return batch_results;
+}
+
+std::vector<std::vector<Detection>> OnnxDetector::detect_batch(
+    const std::vector<const uint8_t*>& frames_data,
+    int width,
+    int height,
+    const std::vector<float>& class_thresholds,
+    float nms_threshold
+) {
+    return detect_batch(frames_data, width, height, 0.10f, nms_threshold, class_thresholds);
 }
 
 } // namespace football_cv

@@ -210,11 +210,15 @@ class ObjectDetector:
         all_detections: list[sv.Detections] = []
 
         if self.native_detector is not None:
-            # Native C++ detector path with batch dispatch (single GIL release per batch)
+            # Native C++ detector path with batch dispatch (single GIL release per batch).
+            # Passes class-specific confidence thresholds directly to C++ for pre-NMS filtering.
             for i in range(0, len(frames), self.batch_size):
                 batch_frames = frames[i : i + self.batch_size]
                 batch_results = self.native_detector.detect_batch(
-                    batch_frames, self.effective_conf, self.nms_threshold
+                    batch_frames,
+                    self.confidence,
+                    self.nms_threshold,
+                    self.class_confidences,
                 )
                 for dets in batch_results:
                     if not dets:
@@ -233,10 +237,9 @@ class ObjectDetector:
                     )
                     conf = np.array([d.confidence for d in dets], dtype=np.float32)
                     cls_id = np.array([d.class_id for d in dets], dtype=int)
-                    raw_dets = sv.Detections(
-                        xyxy=xyxy, confidence=conf, class_id=cls_id
+                    all_detections.append(
+                        sv.Detections(xyxy=xyxy, confidence=conf, class_id=cls_id)
                     )
-                    all_detections.append(self._filter_by_class_confidence(raw_dets))
             return all_detections
 
         # Python onnxruntime fallback path
