@@ -21,7 +21,7 @@ class ObjectTracker:
     def __init__(
         self,
         model_path: str,
-        confidence: float = 0.10,
+        confidence: float = 0.25,
         batch_size: int = 20,
         device: str | None = None,
         engine: str = "ultralytics",
@@ -33,6 +33,7 @@ class ObjectTracker:
         ball_max_displacement_pixels: float = 200.0,
         ball_min_confidence: float = 0.15,
         enable_reid_sanitizer: bool = True,
+        class_confidences: dict[str, float] | None = None,
     ):
         self.detector = ObjectDetector(
             model_path=model_path,
@@ -41,6 +42,7 @@ class ObjectTracker:
             device=device,
             engine=engine,
             nms_threshold=nms_threshold,
+            class_confidences=class_confidences,
         )
         self.tracker = sv.ByteTrack(
             track_activation_threshold=track_activation_threshold,
@@ -53,6 +55,7 @@ class ObjectTracker:
             min_confidence=ball_min_confidence,
         )
         self.enable_reid_sanitizer = enable_reid_sanitizer
+        self.track_role_history: dict[int, list[str]] = {}
 
     def add_positions_to_tracks(self, tracks: dict[str, Any]) -> None:
         """Calculate and add center (ball) or foot position (players/referees) to tracks."""
@@ -91,7 +94,24 @@ class ObjectTracker:
 
         # Apply spatiotemporal tracklet stitching if Re-ID sanitizer is enabled
         if self.enable_reid_sanitizer:
-            TrackSanitizer.stitch_fragmented_tracks(tracks["players"])
+            appearance_features: dict[int, np.ndarray] = {}
+            if frames:
+                for f_idx, frame_players in enumerate(tracks["players"]):
+                    if f_idx < len(frames):
+                        frame = frames[f_idx]
+                        for t_id, info in frame_players.items():
+                            if t_id not in appearance_features and "bbox" in info:
+                                appearance_features[t_id] = (
+                                    TrackSanitizer.extract_appearance_features(
+                                        frame, info["bbox"]
+                                    )
+                                )
+            TrackSanitizer.stitch_fragmented_tracks(
+                tracks["players"],
+                appearance_features=appearance_features
+                if appearance_features
+                else None,
+            )
 
         if stub_path is not None:
             stub_p = Path(stub_path)
@@ -134,11 +154,14 @@ class ObjectTracker:
             else:
                 detection_supervision = sv.Detections.from_ultralytics(detection)
 
-            # Map goalkeeper class to player class so ByteTrack tracks them consistently
+            # Preserve original class IDs before mapping goalkeepers for ByteTrack
+            is_goalkeeper_det = np.zeros(len(detection_supervision), dtype=bool)
             if (
                 detection_supervision.class_id is not None
                 and len(detection_supervision.class_id) > 0
             ):
+                is_goalkeeper_det = detection_supervision.class_id == goalkeeper_cls_id
+                detection_supervision.data["is_goalkeeper"] = is_goalkeeper_det
                 for object_ind, class_id in enumerate(detection_supervision.class_id):
                     if class_id == goalkeeper_cls_id:
                         detection_supervision.class_id[object_ind] = player_cls_id
@@ -152,13 +175,29 @@ class ObjectTracker:
             chunk_tracks["referees"].append({})
             chunk_tracks["balls"].append({})
 
-            for frame_det in detection_with_tracks:
+            for det_idx, frame_det in enumerate(detection_with_tracks):
                 bbox = frame_det[0].tolist()
                 cls_id = frame_det[3]
                 track_id = int(frame_det[4])
 
                 if cls_id == player_cls_id:
-                    chunk_tracks["players"][frame_num][track_id] = {"bbox": bbox}
+                    det_is_gk = False
+                    if "is_goalkeeper" in detection_with_tracks.data:
+                        gk_arr = detection_with_tracks.data["is_goalkeeper"]
+                        if det_idx < len(gk_arr):
+                            det_is_gk = bool(gk_arr[det_idx])
+
+                    role = "goalkeeper" if det_is_gk else "player"
+                    self.track_role_history.setdefault(track_id, []).append(role)
+                    consensus_role = max(
+                        set(self.track_role_history[track_id]),
+                        key=self.track_role_history[track_id].count,
+                    )
+
+                    chunk_tracks["players"][frame_num][track_id] = {
+                        "bbox": bbox,
+                        "role": consensus_role,
+                    }
                 elif cls_id == referee_cls_id:
                     chunk_tracks["referees"][frame_num][track_id] = {"bbox": bbox}
 

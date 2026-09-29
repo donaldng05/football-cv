@@ -124,6 +124,9 @@ class TeamClassifier:
                 frame = frame_or_frames[idx]
                 detections = player_detections_or_tracks[idx]
                 for _, player in detections.items():
+                    # Exclude goalkeepers from KMeans jersey color clustering to prevent centroid poisoning
+                    if player.get("role") == "goalkeeper":
+                        continue
                     bbox = player.get("bbox", [])
                     if len(bbox) < 4:
                         continue
@@ -139,10 +142,27 @@ class TeamClassifier:
             frame = frame_or_frames  # type: ignore[assignment]
             detections = player_detections_or_tracks  # type: ignore[assignment]
             for _, player in detections.items():
+                if player.get("role") == "goalkeeper":
+                    continue
                 bbox = player.get("bbox", [])
                 if len(bbox) >= 4:
                     color = self.get_player_color(frame, bbox)
                     player_colors.append(color)
+
+        if len(player_colors) >= 8:
+            # Filter severe color outliers to protect KMeans centroids
+            arr = np.array(player_colors)
+            median = np.median(arr, axis=0)
+            dists = np.linalg.norm(arr - median, axis=1)
+            med_dist = np.median(dists)
+            if med_dist > 0:
+                inliers = dists <= (3.0 * med_dist)
+                if np.sum(inliers) >= 4:
+                    player_colors = [
+                        c
+                        for c, is_in in zip(player_colors, inliers, strict=False)
+                        if is_in
+                    ]
 
         if len(player_colors) < 2:
             # Fallback if fewer than 2 valid player samples are extracted
@@ -168,15 +188,36 @@ class TeamClassifier:
             self.team_colors[2] = c2
 
     def get_player_team(
-        self, frame: np.ndarray, player_bbox: list[float], player_id: int
+        self,
+        frame: np.ndarray,
+        player_bbox: list[float],
+        player_id: int,
+        role: str = "player",
+        frame_players: dict[int, dict[str, Any]] | None = None,
     ) -> int:
-        """Predict team ID (1 or 2) for a player track using temporal majority consensus."""
+        """
+        Predict team ID (1 or 2) for a player track.
+        For outfield players: uses temporal majority consensus on KMeans jersey color.
+        For goalkeepers: avoids KMeans poisoning and assigns to the team defending that goal/half.
+        """
         if self.kmeans is None:
             return 1
 
-        history = self.player_voting_history.get(player_id, [])
-        if len(history) >= self.voting_window and player_id in self.player_team_dict:
-            return self.player_team_dict[player_id]
+        if player_id in self.player_team_dict:
+            history = self.player_voting_history.get(player_id, [])
+            if len(history) >= self.voting_window:
+                return self.player_team_dict[player_id]
+
+        if role == "goalkeeper":
+            # Assign goalkeeper based on pitch side relative to outfield teammates
+            assigned_team = self._assign_goalkeeper_team(player_bbox, frame_players)
+            if player_id not in self.player_voting_history:
+                self.player_voting_history[player_id] = []
+            self.player_voting_history[player_id].append(assigned_team)
+            hist = self.player_voting_history[player_id]
+            consensus = max(set(hist), key=hist.count)
+            self.player_team_dict[player_id] = consensus
+            return consensus
 
         player_color = self.get_player_color(frame, player_bbox)
         pred_team = int(self.kmeans.predict(player_color.reshape(1, -1))[0] + 1)
@@ -190,6 +231,62 @@ class TeamClassifier:
         consensus = max(set(hist), key=hist.count)
         self.player_team_dict[player_id] = consensus
         return consensus
+
+    def _assign_goalkeeper_team(
+        self,
+        gk_bbox: list[float],
+        frame_players: dict[int, dict[str, Any]] | None,
+    ) -> int:
+        """
+        Assign a goalkeeper to Team 1 or Team 2 based on spatial pitch orientation
+        relative to outfield players defending each side.
+        """
+        if not frame_players or len(gk_bbox) < 4:
+            return 1
+
+        gk_x = (gk_bbox[0] + gk_bbox[2]) / 2.0
+
+        t1_xs = []
+        t2_xs = []
+        for _, p_info in frame_players.items():
+            team = p_info.get("team")
+            bbox = p_info.get("bbox")
+            if (
+                team in (1, 2)
+                and bbox
+                and len(bbox) >= 4
+                and p_info.get("role") != "goalkeeper"
+            ):
+                px = (bbox[0] + bbox[2]) / 2.0
+                if team == 1:
+                    t1_xs.append(px)
+                elif team == 2:
+                    t2_xs.append(px)
+
+        if t1_xs and t2_xs:
+            mean1 = float(np.mean(t1_xs))
+            mean2 = float(np.mean(t2_xs))
+            midpoint = (mean1 + mean2) / 2.0
+            if mean1 < mean2:
+                return 1 if gk_x <= midpoint else 2
+            else:
+                return 2 if gk_x <= midpoint else 1
+
+        # Fallback to closest outfield player's team
+        min_dist = float("inf")
+        closest_team = 1
+        for _, p_info in frame_players.items():
+            team = p_info.get("team")
+            bbox = p_info.get("bbox")
+            if team in (1, 2) and bbox and len(bbox) >= 4:
+                px = (bbox[0] + bbox[2]) / 2.0
+                py = (bbox[1] + bbox[3]) / 2.0
+                gk_y = (gk_bbox[1] + gk_bbox[3]) / 2.0
+                d = (px - gk_x) ** 2 + (py - gk_y) ** 2
+                if d < min_dist:
+                    min_dist = d
+                    closest_team = team
+        return closest_team
 
 
 # Alias for backward compatibility

@@ -4,7 +4,7 @@ Object detection module leveraging Ultralytics YOLOv8 and C++ ONNX Runtime.
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import supervision as sv
@@ -27,14 +27,19 @@ class ObjectDetector:
     Object detector wrapper supporting Ultralytics PyTorch and high-performance ONNX Runtime backends.
     """
 
+    class_confidences: ClassVar[dict[str, float] | None] = None
+    names: ClassVar[dict[int, str]] = dict(DEFAULT_CLASS_NAMES)
+    names_inv: ClassVar[dict[str, int]] = {v: k for k, v in DEFAULT_CLASS_NAMES.items()}
+
     def __init__(
         self,
         model_path: str,
-        confidence: float = 0.10,
+        confidence: float = 0.25,
         batch_size: int = 20,
         device: str | None = None,
         engine: str = "ultralytics",
         nms_threshold: float = 0.50,
+        class_confidences: dict[str, float] | None = None,
     ):
         self.model_path = model_path
         self.confidence = confidence
@@ -42,12 +47,62 @@ class ObjectDetector:
         self.device = device
         self.engine = engine.lower()
         self.nms_threshold = nms_threshold
+        self.class_confidences = dict(class_confidences) if class_confidences else None
         self.names = dict(DEFAULT_CLASS_NAMES)
+        self.names_inv = {v: k for k, v in self.names.items()}
 
         if self.engine == "onnx":
             self._init_onnx_engine()
         else:
             self._init_ultralytics_engine()
+
+    @property
+    def effective_conf(self) -> float:
+        """Lowest detection confidence threshold across all configured classes."""
+        class_confs = getattr(self, "class_confidences", None)
+        base_conf = getattr(self, "confidence", 0.25)
+        if class_confs:
+            return min(min(class_confs.values()), base_conf)
+        return base_conf
+
+    def _filter_by_class_confidence(self, detections: Any) -> Any:
+        """
+        Apply class-specific confidence thresholds to detection outputs.
+        Supports both sv.Detections and Ultralytics Results.
+        """
+        class_confs = getattr(self, "class_confidences", None)
+        if not class_confs or len(detections) == 0:
+            return detections
+
+        names_inv = getattr(
+            self, "names_inv", {v: k for k, v in DEFAULT_CLASS_NAMES.items()}
+        )
+
+        if isinstance(detections, sv.Detections):
+            if len(detections.xyxy) == 0:
+                return detections
+            keep_mask = np.ones(len(detections), dtype=bool)
+            for cls_name, min_conf in class_confs.items():
+                cls_id = names_inv.get(cls_name)
+                if cls_id is not None and detections.class_id is not None:
+                    match_mask = detections.class_id == cls_id
+                    keep_mask[match_mask] = (
+                        detections.confidence[match_mask] >= min_conf
+                    )
+            return detections[keep_mask]
+        else:
+            # Ultralytics Results
+            if getattr(detections, "boxes", None) is None or len(detections.boxes) == 0:
+                return detections
+            clses = detections.boxes.cls.cpu().numpy()
+            confs = detections.boxes.conf.cpu().numpy()
+            keep_mask = np.ones(len(detections.boxes), dtype=bool)
+            for cls_name, min_conf in class_confs.items():
+                cls_id = names_inv.get(cls_name)
+                if cls_id is not None:
+                    match_mask = clses == cls_id
+                    keep_mask[match_mask] = confs[match_mask] >= min_conf
+            return detections[keep_mask]
 
     def _init_ultralytics_engine(self) -> None:
         """Initialize Ultralytics YOLO PyTorch model."""
@@ -57,8 +112,9 @@ class ObjectDetector:
             self.model = YOLO(self.model_path)
             if hasattr(self.model, "names") and isinstance(self.model.names, dict):
                 self.names = dict(self.model.names)
+                self.names_inv = {v: k for k, v in self.names.items()}
             logger.info(
-                f"Initialized Ultralytics YOLO detector (conf={self.confidence}, device='{self.device}')"
+                f"Initialized Ultralytics YOLO detector (conf={self.confidence}, effective_conf={self.effective_conf}, device='{self.device}')"
             )
         except Exception as exc:
             raise ModelError(
@@ -137,14 +193,15 @@ class ObjectDetector:
     def _detect_ultralytics(self, frames: list[np.ndarray]) -> list[Any]:
         """Inference pass using Ultralytics YOLO PyTorch wrapper."""
         all_detections = []
-        predict_kwargs = {"conf": self.confidence, "verbose": False}
+        predict_kwargs = {"conf": self.effective_conf, "verbose": False}
         if self.device is not None and self.device != "auto":
             predict_kwargs["device"] = self.device
 
         for i in range(0, len(frames), self.batch_size):
             batch = frames[i : i + self.batch_size]
             results = self.model.predict(batch, **predict_kwargs)
-            all_detections.extend(results)
+            for res in results:
+                all_detections.append(self._filter_by_class_confidence(res))
 
         return all_detections
 
@@ -157,7 +214,7 @@ class ObjectDetector:
             for i in range(0, len(frames), self.batch_size):
                 batch_frames = frames[i : i + self.batch_size]
                 batch_results = self.native_detector.detect_batch(
-                    batch_frames, self.confidence, self.nms_threshold
+                    batch_frames, self.effective_conf, self.nms_threshold
                 )
                 for dets in batch_results:
                     if not dets:
@@ -176,9 +233,10 @@ class ObjectDetector:
                     )
                     conf = np.array([d.confidence for d in dets], dtype=np.float32)
                     cls_id = np.array([d.class_id for d in dets], dtype=int)
-                    all_detections.append(
-                        sv.Detections(xyxy=xyxy, confidence=conf, class_id=cls_id)
+                    raw_dets = sv.Detections(
+                        xyxy=xyxy, confidence=conf, class_id=cls_id
                     )
+                    all_detections.append(self._filter_by_class_confidence(raw_dets))
             return all_detections
 
         # Python onnxruntime fallback path
@@ -212,12 +270,12 @@ class ObjectDetector:
                     d = self._postprocess_yolo_tensor(
                         preds[b_idx], orig_w, orig_h, pad_x, pad_y, inv_r
                     )
-                    all_detections.append(d)
+                    all_detections.append(self._filter_by_class_confidence(d))
             else:
                 # Single-frame inference path (fixed batch-1 models)
                 for frame in batch_frames:
                     d = self._detect_single_python_onnx(frame)
-                    all_detections.append(d)
+                    all_detections.append(self._filter_by_class_confidence(d))
 
         return all_detections
 
@@ -301,7 +359,7 @@ class ObjectDetector:
         best_classes = np.argmax(class_scores, axis=0)
         max_scores = class_scores[best_classes, np.arange(class_scores.shape[1])]
 
-        mask = max_scores >= self.confidence
+        mask = max_scores >= self.effective_conf
         if not np.any(mask):
             return sv.Detections(
                 xyxy=np.zeros((0, 4), dtype=np.float32),

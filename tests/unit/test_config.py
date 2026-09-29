@@ -19,7 +19,8 @@ class TestConfigLoading:
     def test_load_default_yaml_config(self):
         config = load_config("configs/default.yaml")
         assert isinstance(config, AppConfig)
-        assert config.model.confidence == 0.10
+        assert config.model.confidence == 0.25
+        assert config.model.class_confidences["ball"] == 0.12
         assert config.video.frame_rate == 25.0
         assert config.possession.max_player_ball_distance == 70.0
         assert len(config.perspective.pixel_vertices) == 4
@@ -28,7 +29,7 @@ class TestConfigLoading:
 
     def test_load_fast_yaml_config(self):
         config = load_config("configs/fast.yaml")
-        assert config.model.confidence == 0.20
+        assert config.model.confidence == 0.25
         assert config.video.end_frame == 50
         assert config.model.device == "cpu"
         assert config.logging.level == "DEBUG"
@@ -36,7 +37,8 @@ class TestConfigLoading:
 
     def test_load_high_accuracy_yaml_config(self):
         config = load_config("configs/high_accuracy.yaml")
-        assert config.model.confidence == 0.15
+        assert config.model.confidence == 0.30
+        assert config.model.class_confidences["ball"] == 0.15
         assert config.model.device == "cuda"
         assert config.model.batch_size == 32
         assert config.vision.backend == "python"
