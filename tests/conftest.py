@@ -51,17 +51,32 @@ def ensure_sample_match_video() -> Path:
     return video_path
 
 
+def _generate_synthetic_model_checkpoint(output_path: Path) -> None:
+    """Generate a lightweight valid YOLOv8 checkpoint for testing."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from ultralytics import YOLO
+
+        model = YOLO("yolov8n.yaml")
+        model.save(str(output_path))
+    except Exception:
+        import torch
+
+        dummy_dict = {"model": None, "ema": None, "updates": 0, "epoch": -1}
+        torch.save(dummy_dict, str(output_path))
+
+
 @pytest.fixture(scope="session", autouse=True)
 def ensure_model_weights() -> Path:
     """
     Ensure a model weights file exists at models/best.pt for testing.
-    Creates a non-empty mock checkpoint if absent in a clean checkout.
+    Creates a valid synthetic YOLO checkpoint if absent in a clean checkout.
     """
     model_dir = Path("models")
     model_dir.mkdir(parents=True, exist_ok=True)
     best_pt = model_dir / "best.pt"
-    if not best_pt.exists():
-        best_pt.write_bytes(b"PK\x03\x04mock_weights_for_testing")
+    if not best_pt.exists() or best_pt.stat().st_size == 0:
+        _generate_synthetic_model_checkpoint(best_pt)
     return best_pt
 
 

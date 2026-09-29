@@ -27,7 +27,11 @@ def validate_model_path(path: str | Path) -> dict[str, Any]:
     """
     model_p = Path(path)
     if not model_p.exists():
-        raise ValidationError(f"Model checkpoint not found: {model_p}")
+        raise ValidationError(
+            f"Model checkpoint not found: {model_p}. "
+            "Run 'python scripts/download_models.py' to download production weights, "
+            "or 'python scripts/download_models.py --dummy' for a lightweight synthetic testing checkpoint."
+        )
     if not model_p.is_file():
         raise ValidationError(f"Model checkpoint path is not a file: {model_p}")
 

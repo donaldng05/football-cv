@@ -76,6 +76,29 @@ def download_file(url: str, dest_path: Path) -> None:
     print("\nDownload complete.")
 
 
+def create_dummy_checkpoint(dest_path: Path) -> Path:
+    """Generate a lightweight valid YOLOv8 checkpoint for CI/testing without remote downloads."""
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from ultralytics import YOLO
+
+        model = YOLO("yolov8n.yaml")
+        model.save(str(dest_path))
+        print(
+            f"[INFO] Created synthetic YOLOv8 checkpoint at {dest_path} ({dest_path.stat().st_size} bytes)"
+        )
+    except Exception as exc:
+        print(
+            f"[WARN] Failed to instantiate YOLOv8 architecture ({exc}), falling back to torch.save"
+        )
+        import torch
+
+        dummy_dict = {"model": None, "ema": None, "updates": 0, "epoch": -1}
+        torch.save(dummy_dict, str(dest_path))
+        print(f"[INFO] Created fallback dummy PyTorch checkpoint at {dest_path}")
+    return dest_path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Download or verify football-cv model weights."
@@ -92,6 +115,11 @@ def main() -> int:
         help="Only verify existing checkpoints without downloading",
     )
     parser.add_argument(
+        "--dummy",
+        action="store_true",
+        help="Ensure a valid dummy/synthetic model exists for CI and offline testing without downloading",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Force re-download even if weights already exist",
@@ -100,6 +128,17 @@ def main() -> int:
 
     models_dir: Path = args.models_dir
     models_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.dummy:
+        primary_dest = models_dir / "best.pt"
+        if primary_dest.exists() and primary_dest.stat().st_size > 0:
+            print(
+                f"[INFO] Model checkpoint already exists: {primary_dest} "
+                f"({primary_dest.stat().st_size / (1024 * 1024):.2f} MB)"
+            )
+            return 0
+        create_dummy_checkpoint(primary_dest)
+        return 0
 
     all_ok = True
     for filename, info in KNOWN_MODELS.items():
