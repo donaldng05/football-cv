@@ -1,6 +1,9 @@
-# Rigorous Error Analysis & Failure Taxonomy
+# Synthetic Diagnostic Suite & Failure Taxonomy
 
-Comprehensive failure taxonomy, reproducible benchmark cases, and quantitative mitigation evaluations across detection, tracking, perspective/motion, and tactical analytics stages in `football-cv`.
+Comprehensive failure taxonomy, reproducible diagnostic edge cases, and quantitative mitigation evaluations across detection, tracking, perspective/motion, and tactical analytics stages in `football-cv`.
+
+> [!NOTE]
+> The benchmark cases in this subsystem are controlled, deterministic **synthetic diagnostic scenarios** authored to stress-test and verify internal heuristic safeguards. They provide unit-level regression guarantees and are not a substitute for human-annotated empirical benchmark datasets on real match footage (e.g., SoccerNet).
 
 ---
 
@@ -8,9 +11,9 @@ Comprehensive failure taxonomy, reproducible benchmark cases, and quantitative m
 
 Computer vision models deployed on broadcast sports footage operate under adverse visual conditions: rapid player decelerations, ball motion blur, multi-player occlusions during scrums, camera whip pans, and unannounced broadcast cuts. Without systematic categorization and defensive algorithmic filters, small upstream perceptual errors cascade into catastrophic tactical misattributions (e.g. false passes or inverted possession metrics).
 
-Phase 10 of `football-cv` establishes:
+The error analysis subsystem establishes:
 1. **Four-tier Failure Taxonomy**: Spanning Detection, Tracking, Perspective & Motion, and Analytics.
-2. **Standard Diagnostic Benchmark Suite**: Five reproducible synthetic and empirical edge cases.
+2. **Diagnostic Stress-Test Suite**: Five reproducible synthetic edge cases verifying algorithmic defensive filters.
 3. **Validated Algorithmic Mitigations**:
    - Kinematic displacement validation rejecting near-zero transfer tracker identity swaps.
    - Superhuman pass velocity threshold filtering (> 45.0 m/s / 162 km/h).
