@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
 project(football_cv_core VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)

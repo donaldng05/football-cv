@@ -7,6 +7,15 @@
 namespace football_cv {
 
 /**
+ * @brief Policy determining behavior when projected points fall outside pitch boundaries.
+ */
+enum class OutOfBoundsPolicy {
+    Strict,       ///< Discard points outside boundary (return std::nullopt)
+    Clip,         ///< Clamp points to pitch court dimensions [0, width] x [0, length]
+    Extrapolate   ///< Allow unbounded projection beyond pitch boundaries
+};
+
+/**
  * @brief Represents a 2D coordinate point with floating-point precision.
  */
 struct Point2D {

@@ -1,6 +1,8 @@
 #include "football_cv/perspective.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace football_cv {
@@ -106,6 +108,25 @@ void PerspectiveTransformer::compute_homography() {
     h_[8] = 1.0;
 }
 
+std::array<double, 9> PerspectiveTransformer::get_effective_homography(
+    const std::optional<std::array<double, 9>>& camera_matrix
+) const noexcept {
+    if (!camera_matrix.has_value()) {
+        return h_;
+    }
+    const auto& cam = *camera_matrix;
+    std::array<double, 9> h_eff{};
+    // Matrix multiplication: H_eff = H @ H_cam (both 3x3 row-major)
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            h_eff[r * 3 + c] = h_[r * 3 + 0] * cam[0 * 3 + c] +
+                               h_[r * 3 + 1] * cam[1 * 3 + c] +
+                               h_[r * 3 + 2] * cam[2 * 3 + c];
+        }
+    }
+    return h_eff;
+}
+
 bool PerspectiveTransformer::is_point_inside(const Point2D& pt) const noexcept {
     if (!pt.is_finite()) {
         return false;
@@ -156,35 +177,130 @@ bool PerspectiveTransformer::is_point_inside(const Point2D& pt) const noexcept {
 
 std::optional<Point2D> PerspectiveTransformer::transform_point(
     const Point2D& point,
-    bool check_boundary
+    OutOfBoundsPolicy policy,
+    const std::optional<std::array<double, 9>>& camera_matrix
 ) const noexcept {
-    if (check_boundary && !is_point_inside(point)) {
+    if (!point.is_finite()) {
         return std::nullopt;
     }
 
+    const auto h_eff = get_effective_homography(camera_matrix);
     const double x = point.x;
     const double y = point.y;
 
-    const double denom = h_[6] * x + h_[7] * y + h_[8];
-    if (std::abs(denom) < 1e-12) {
+    // Check projective horizon singularity (w' = h31*x + h32*y + h33)
+    const double w_prime = h_eff[6] * x + h_eff[7] * y + h_eff[8];
+    if (w_prime <= 1e-6) {
         return std::nullopt;
     }
 
-    const double tx = (h_[0] * x + h_[1] * y + h_[2]) / denom;
-    const double ty = (h_[3] * x + h_[4] * y + h_[5]) / denom;
+    double tx = (h_eff[0] * x + h_eff[1] * y + h_eff[2]) / w_prime;
+    double ty = (h_eff[3] * x + h_eff[4] * y + h_eff[5]) / w_prime;
+
+    bool is_inside = false;
+    if (!camera_matrix.has_value()) {
+        is_inside = is_point_inside(point);
+    } else {
+        // When camera motion is compensated, evaluate against invariant pitch metric bounds
+        is_inside = (tx >= 0.0 && tx <= court_width_ && ty >= 0.0 && ty <= court_length_);
+    }
+
+    if (!is_inside && policy == OutOfBoundsPolicy::Strict) {
+        return std::nullopt;
+    }
+
+    if (!is_inside && policy == OutOfBoundsPolicy::Clip) {
+        tx = std::clamp(tx, 0.0, court_width_);
+        ty = std::clamp(ty, 0.0, court_length_);
+    }
 
     return Point2D{tx, ty};
 }
 
+std::optional<Point2D> PerspectiveTransformer::transform_point(
+    const Point2D& point,
+    bool check_boundary
+) const noexcept {
+    return transform_point(
+        point,
+        check_boundary ? OutOfBoundsPolicy::Strict : OutOfBoundsPolicy::Extrapolate,
+        std::nullopt
+    );
+}
+
 std::vector<std::optional<Point2D>> PerspectiveTransformer::transform_points(
-    const std::vector<Point2D>& points
+    const std::vector<Point2D>& points,
+    OutOfBoundsPolicy policy,
+    const std::optional<std::array<double, 9>>& camera_matrix
 ) const {
     std::vector<std::optional<Point2D>> results;
     results.reserve(points.size());
     for (const auto& pt : points) {
-        results.push_back(transform_point(pt));
+        results.push_back(transform_point(pt, policy, camera_matrix));
     }
     return results;
+}
+
+void PerspectiveTransformer::transform_points_batch_raw(
+    const double* points_in,
+    size_t count,
+    double* points_out,
+    OutOfBoundsPolicy policy,
+    const std::optional<std::array<double, 9>>& camera_matrix,
+    bool* valid_mask
+) const noexcept {
+    if (!points_in || !points_out || count == 0) {
+        return;
+    }
+
+    const auto h_eff = get_effective_homography(camera_matrix);
+    const bool has_cam = camera_matrix.has_value();
+
+    for (size_t i = 0; i < count; ++i) {
+        const double x = points_in[2 * i + 0];
+        const double y = points_in[2 * i + 1];
+
+        if (!std::isfinite(x) || !std::isfinite(y)) {
+            points_out[2 * i + 0] = std::numeric_limits<double>::quiet_NaN();
+            points_out[2 * i + 1] = std::numeric_limits<double>::quiet_NaN();
+            if (valid_mask) valid_mask[i] = false;
+            continue;
+        }
+
+        const double w_prime = h_eff[6] * x + h_eff[7] * y + h_eff[8];
+        if (w_prime <= 1e-6) {
+            points_out[2 * i + 0] = std::numeric_limits<double>::quiet_NaN();
+            points_out[2 * i + 1] = std::numeric_limits<double>::quiet_NaN();
+            if (valid_mask) valid_mask[i] = false;
+            continue;
+        }
+
+        double tx = (h_eff[0] * x + h_eff[1] * y + h_eff[2]) / w_prime;
+        double ty = (h_eff[3] * x + h_eff[4] * y + h_eff[5]) / w_prime;
+
+        bool is_inside = false;
+        if (!has_cam) {
+            is_inside = is_point_inside(Point2D{x, y});
+        } else {
+            is_inside = (tx >= 0.0 && tx <= court_width_ && ty >= 0.0 && ty <= court_length_);
+        }
+
+        if (!is_inside && policy == OutOfBoundsPolicy::Strict) {
+            points_out[2 * i + 0] = std::numeric_limits<double>::quiet_NaN();
+            points_out[2 * i + 1] = std::numeric_limits<double>::quiet_NaN();
+            if (valid_mask) valid_mask[i] = false;
+            continue;
+        }
+
+        if (!is_inside && policy == OutOfBoundsPolicy::Clip) {
+            tx = std::clamp(tx, 0.0, court_width_);
+            ty = std::clamp(ty, 0.0, court_length_);
+        }
+
+        points_out[2 * i + 0] = tx;
+        points_out[2 * i + 1] = ty;
+        if (valid_mask) valid_mask[i] = true;
+    }
 }
 
 } // namespace football_cv

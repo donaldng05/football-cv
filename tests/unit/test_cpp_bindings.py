@@ -331,6 +331,105 @@ class TestPerspectiveTransformerBindings:
         # Verify numerical match within 1e-4
         assert np.allclose(cpp_h, expected_h, atol=1e-4)
 
+    def test_out_of_bounds_policy_enum(self):
+        assert hasattr(native_core, "OutOfBoundsPolicy")
+        assert native_core.OutOfBoundsPolicy.Strict is not None
+        assert native_core.OutOfBoundsPolicy.Clip is not None
+        assert native_core.OutOfBoundsPolicy.Extrapolate is not None
+
+    def test_get_effective_homography_bindings(self):
+        transformer = native_core.PerspectiveTransformer()
+        h_base = transformer.homography_matrix
+        h_eff_none = transformer.get_effective_homography()
+        assert np.allclose(h_base, h_eff_none)
+
+        # 3x3 translation camera matrix
+        cam_matrix = np.array(
+            [[1.0, 0.0, 10.0], [0.0, 1.0, -5.0], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+        expected = h_base @ cam_matrix
+        h_eff_cam = transformer.get_effective_homography(cam_matrix)
+        assert np.allclose(h_eff_cam, expected, atol=1e-5)
+
+    def test_transform_point_policies(self):
+        transformer = native_core.PerspectiveTransformer()
+        outside_pt = native_core.Point2D(0.0, 0.0)
+
+        # Strict -> None
+        assert transformer.transform_point(outside_pt, "strict") is None
+        assert (
+            transformer.transform_point(
+                outside_pt, native_core.OutOfBoundsPolicy.Strict
+            )
+            is None
+        )
+
+        # Clip -> bounded within [0, court_width] x [0, court_length]
+        clipped = transformer.transform_point(outside_pt, "clip")
+        assert clipped is not None
+        assert 0.0 <= clipped.x <= 68.0
+        assert 0.0 <= clipped.y <= 23.32
+
+        # Extrapolate -> finite values (outside standard court)
+        extrapolated = transformer.transform_point(outside_pt, "extrapolate")
+        assert extrapolated is not None
+        assert extrapolated.is_finite()
+
+    def test_transform_point_camera_matrix(self):
+        transformer = native_core.PerspectiveTransformer()
+        inside_pt = native_core.Point2D(500.0, 500.0)
+        p_no_cam = transformer.transform_point(inside_pt)
+        assert p_no_cam is not None
+
+        # Camera shifted by 20 pixels
+        cam_matrix = np.eye(3, dtype=np.float64)
+        cam_matrix[0, 2] = 20.0
+        p_cam = transformer.transform_point(
+            inside_pt, camera_matrix=cam_matrix, policy="extrapolate"
+        )
+        assert p_cam is not None
+        assert p_cam != p_no_cam
+
+    def test_transform_points_batch_numpy(self):
+        transformer = native_core.PerspectiveTransformer()
+        pts = np.array([[500.0, 500.0], [0.0, 0.0], [600.0, 400.0]], dtype=np.float32)
+
+        # 1. Strict mode (out-of-bounds become NaN)
+        out_strict = transformer.transform_points_batch(
+            pts, out_of_bounds_policy="strict"
+        )
+        assert out_strict.shape == (3, 2)
+        assert out_strict.dtype == np.float32
+        assert np.isfinite(out_strict[0, 0])
+        assert np.isnan(out_strict[1, 0])
+        assert np.isfinite(out_strict[2, 0])
+
+        # 2. Clip mode
+        out_clip = transformer.transform_points_batch(pts, out_of_bounds_policy="clip")
+        assert np.all(np.isfinite(out_clip))
+        assert 0.0 <= out_clip[1, 0] <= 68.0
+        assert 0.0 <= out_clip[1, 1] <= 23.32
+
+        # 3. With camera matrix
+        cam_matrix = np.eye(3, dtype=np.float64)
+        cam_matrix[0, 2] = 10.0
+        out_cam = transformer.transform_points_batch(
+            pts, camera_matrix=cam_matrix, out_of_bounds_policy="extrapolate"
+        )
+        assert out_cam.shape == (3, 2)
+        assert np.all(np.isfinite(out_cam))
+
+    def test_projective_horizon_singularity_rejection(self):
+        transformer = native_core.PerspectiveTransformer()
+        h_eff = transformer.homography_matrix
+        # Calculate a point on horizon line: h31*x + h32*y + h33 = 0 -> x = -h33/h31
+        horizon_x = -h_eff[2, 2] / (h_eff[2, 0] + 1e-12)
+        horizon_pt = native_core.Point2D(horizon_x, 0.0)
+
+        # Must reject with None
+        assert transformer.transform_point(horizon_pt, policy="extrapolate") is None
+
 
 class TestCameraMotionEstimatorBindings:
     """Test suite for native CameraMotionEstimator."""

@@ -94,6 +94,67 @@ std::vector<Point2D> parse_points(const py::object& obj) {
     );
 }
 
+/**
+ * @brief Parse OutOfBoundsPolicy from string ("strict", "clip", "extrapolate") or enum.
+ */
+OutOfBoundsPolicy parse_policy(const py::object& obj, OutOfBoundsPolicy default_policy = OutOfBoundsPolicy::Strict) {
+    if (obj.is_none()) return default_policy;
+    if (py::isinstance<OutOfBoundsPolicy>(obj)) return obj.cast<OutOfBoundsPolicy>();
+    if (py::isinstance<py::str>(obj)) {
+        std::string s = obj.cast<std::string>();
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (s == "strict") return OutOfBoundsPolicy::Strict;
+        if (s == "clip") return OutOfBoundsPolicy::Clip;
+        if (s == "extrapolate") return OutOfBoundsPolicy::Extrapolate;
+        throw std::invalid_argument("Invalid out_of_bounds_policy: '" + s + "'. Must be 'strict', 'clip', or 'extrapolate'");
+    }
+    if (py::isinstance<py::bool_>(obj)) {
+        bool b = obj.cast<bool>();
+        return b ? OutOfBoundsPolicy::Strict : OutOfBoundsPolicy::Extrapolate;
+    }
+    throw std::invalid_argument("Expected OutOfBoundsPolicy enum or string ('strict', 'clip', 'extrapolate')");
+}
+
+/**
+ * @brief Parse 3x3 camera matrix from None, 9-element flat array, or (3, 3) 2D NumPy array.
+ */
+std::optional<std::array<double, 9>> parse_camera_matrix(const py::object& obj) {
+    if (obj.is_none()) return std::nullopt;
+    if (py::isinstance<py::array>(obj)) {
+        auto arr = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(obj);
+        if (arr) {
+            auto info = arr.request();
+            if ((info.ndim == 2 && info.shape[0] == 3 && info.shape[1] == 3) ||
+                (info.ndim == 1 && info.shape[0] == 9)) {
+                std::array<double, 9> m{};
+                const double* ptr = static_cast<const double*>(info.ptr);
+                std::copy(ptr, ptr + 9, m.begin());
+                return m;
+            }
+        }
+    }
+    if (py::isinstance<py::sequence>(obj)) {
+        auto seq = obj.cast<py::sequence>();
+        if (seq.size() == 9) {
+            std::array<double, 9> m{};
+            for (size_t i = 0; i < 9; ++i) m[i] = seq[i].cast<double>();
+            return m;
+        }
+        if (seq.size() == 3) {
+            std::array<double, 9> m{};
+            for (size_t r = 0; r < 3; ++r) {
+                auto row = seq[r].cast<py::sequence>();
+                if (row.size() != 3) {
+                    throw std::invalid_argument("Each row of a 3x3 camera matrix sequence must contain 3 elements");
+                }
+                for (size_t c = 0; c < 3; ++c) m[r * 3 + c] = row[c].cast<double>();
+            }
+            return m;
+        }
+    }
+    throw std::invalid_argument("Expected None, 3x3 array, or 9-element sequence for camera_matrix");
+}
+
 } // anonymous namespace
 
 PYBIND11_MODULE(_core, m) {
@@ -236,6 +297,15 @@ PYBIND11_MODULE(_core, m) {
           "Find the index of the nearest point within an optional maximum distance.");
 
     // ------------------------------------------------------------------------
+    // OutOfBoundsPolicy
+    // ------------------------------------------------------------------------
+    py::enum_<OutOfBoundsPolicy>(m, "OutOfBoundsPolicy", "Policy determining behavior when projected points fall outside pitch boundaries.")
+        .value("Strict", OutOfBoundsPolicy::Strict)
+        .value("Clip", OutOfBoundsPolicy::Clip)
+        .value("Extrapolate", OutOfBoundsPolicy::Extrapolate)
+        .export_values();
+
+    // ------------------------------------------------------------------------
     // PerspectiveTransformer
     // ------------------------------------------------------------------------
     py::class_<PerspectiveTransformer>(m, "PerspectiveTransformer",
@@ -246,19 +316,86 @@ PYBIND11_MODULE(_core, m) {
         }), py::arg("pixel_vertices") = py::none(),
             py::arg("court_width") = 68.0,
             py::arg("court_length") = 23.32)
-        .def("transform_point", [](const PerspectiveTransformer& self, py::object point, bool check_boundary) -> std::optional<Point2D> {
-            Point2D pt = parse_point(point);
-            return self.transform_point(pt, check_boundary);
-        }, py::arg("point"), py::arg("check_boundary") = true,
-           "Transform a 2D point from broadcast pixel coordinates to metric pitch coordinates.")
-        .def("transform_point", [](const PerspectiveTransformer& self, double x, double y, bool check_boundary) -> std::optional<Point2D> {
-            return self.transform_point(Point2D{x, y}, check_boundary);
-        }, py::arg("x"), py::arg("y"), py::arg("check_boundary") = true,
+        .def("get_effective_homography", [](const PerspectiveTransformer& self, py::object camera_matrix) {
+            auto cam = parse_camera_matrix(camera_matrix);
+            auto h_eff = self.get_effective_homography(cam);
+            py::array_t<double> arr(std::vector<py::ssize_t>{3, 3});
+            auto r = arr.mutable_unchecked<2>();
+            for (py::ssize_t i = 0; i < 3; ++i) {
+                for (py::ssize_t j = 0; j < 3; ++j) {
+                    r(i, j) = h_eff[i * 3 + j];
+                }
+            }
+            return arr;
+        }, py::arg("camera_matrix") = py::none(),
+           "Compute effective 3x3 homography compounded with an optional camera matrix.")
+        .def("transform_point", [](const PerspectiveTransformer& self,
+                                   double x, double y,
+                                   py::object policy_or_check,
+                                   py::object camera_matrix) -> std::optional<Point2D> {
+            OutOfBoundsPolicy policy = parse_policy(policy_or_check);
+            auto cam = parse_camera_matrix(camera_matrix);
+            return self.transform_point(Point2D{x, y}, policy, cam);
+        }, py::arg("x"), py::arg("y"),
+           py::arg("policy") = "strict",
+           py::arg("camera_matrix") = py::none(),
            "Transform (x, y) coordinates to metric pitch coordinates.")
-        .def("transform_points", [](const PerspectiveTransformer& self, py::object points) {
+        .def("transform_point", [](const PerspectiveTransformer& self,
+                                   py::object point,
+                                   py::object policy_or_check,
+                                   py::object camera_matrix) -> std::optional<Point2D> {
+            Point2D pt = parse_point(point);
+            OutOfBoundsPolicy policy = parse_policy(policy_or_check);
+            auto cam = parse_camera_matrix(camera_matrix);
+            return self.transform_point(pt, policy, cam);
+        }, py::arg("point"),
+           py::arg("policy") = "strict",
+           py::arg("camera_matrix") = py::none(),
+           "Transform a 2D point from broadcast pixel coordinates to metric pitch coordinates.")
+        .def("transform_points", [](const PerspectiveTransformer& self,
+                                    py::object points,
+                                    py::object policy_or_check,
+                                    py::object camera_matrix) {
             std::vector<Point2D> pts = parse_points(points);
-            return self.transform_points(pts);
-        }, py::arg("points"), "Batch project multiple image coordinates.")
+            OutOfBoundsPolicy policy = parse_policy(policy_or_check);
+            auto cam = parse_camera_matrix(camera_matrix);
+            return self.transform_points(pts, policy, cam);
+        }, py::arg("points"),
+           py::arg("policy") = "strict",
+           py::arg("camera_matrix") = py::none(),
+           "Batch project multiple image coordinates.")
+        .def("transform_points_batch", [](const PerspectiveTransformer& self,
+                                          py::array_t<double, py::array::c_style | py::array::forcecast> points,
+                                          py::object camera_matrix,
+                                          py::object policy_or_check) -> py::array_t<float> {
+            auto info = points.request();
+            if (info.ndim == 0 || info.size == 0) {
+                return py::array_t<float>(std::vector<py::ssize_t>{0, 2});
+            }
+            if (info.ndim != 2 || info.shape[1] != 2) {
+                throw std::invalid_argument("Expected 2D array of shape (N, 2)");
+            }
+            const size_t N = static_cast<size_t>(info.shape[0]);
+            OutOfBoundsPolicy policy = parse_policy(policy_or_check, OutOfBoundsPolicy::Extrapolate);
+            auto cam = parse_camera_matrix(camera_matrix);
+
+            py::array_t<float> result(std::vector<py::ssize_t>{static_cast<py::ssize_t>(N), 2});
+            float* out_ptr = static_cast<float*>(result.request().ptr);
+            const double* in_ptr = static_cast<const double*>(info.ptr);
+
+            {
+                py::gil_scoped_release release;
+                std::vector<double> tmp_out(2 * N);
+                self.transform_points_batch_raw(in_ptr, N, tmp_out.data(), policy, cam);
+                for (size_t i = 0; i < 2 * N; ++i) {
+                    out_ptr[i] = static_cast<float>(tmp_out[i]);
+                }
+            }
+            return result;
+        }, py::arg("points"),
+           py::arg("camera_matrix") = py::none(),
+           py::arg("out_of_bounds_policy") = "extrapolate",
+           "Vectorized transformation of an (N, 2) array of pixel coordinates to metric pitch coordinates.")
         .def("is_point_inside", [](const PerspectiveTransformer& self, py::object point) {
             Point2D pt = parse_point(point);
             return self.is_point_inside(pt);
@@ -267,11 +404,11 @@ PYBIND11_MODULE(_core, m) {
         .def_property_readonly("court_length", &PerspectiveTransformer::court_length)
         .def_property_readonly("pixel_vertices", &PerspectiveTransformer::pixel_vertices)
         .def_property_readonly("homography_matrix", [](const PerspectiveTransformer& self) {
-            py::array_t<double> arr({3, 3});
+            py::array_t<double> arr(std::vector<py::ssize_t>{3, 3});
             auto r = arr.mutable_unchecked<2>();
             const auto& h = self.homography_matrix();
-            for (ssize_t i = 0; i < 3; ++i) {
-                for (ssize_t j = 0; j < 3; ++j) {
+            for (py::ssize_t i = 0; i < 3; ++i) {
+                for (py::ssize_t j = 0; j < 3; ++j) {
                     r(i, j) = h[i * 3 + j];
                 }
             }

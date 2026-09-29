@@ -28,18 +28,66 @@ public:
     );
 
     /**
-     * @brief Project a 2D image coordinate to pitch metric coordinates.
+     * @brief Compute effective 3x3 homography compounded with an optional camera matrix.
+     *        H_eff = H_{0->pitch} @ camera_matrix.
+     *
+     * @param camera_matrix Optional 3x3 row-major inter-frame camera transformation H_{t -> 0}.
+     * @return 3x3 row-major effective homography matrix.
+     */
+    std::array<double, 9> get_effective_homography(
+        const std::optional<std::array<double, 9>>& camera_matrix = std::nullopt
+    ) const noexcept;
+
+    /**
+     * @brief Project a 2D image coordinate to pitch metric coordinates with policy and camera matrix.
      *
      * @param point Image coordinate (pixel x, y).
-     * @param check_boundary If true, returns std::nullopt when point is outside calibrated polygon.
-     * @return Point2D in pitch meters, or std::nullopt if point is outside polygon boundary (when check_boundary is true).
+     * @param policy Out of bounds policy (Strict, Clip, Extrapolate).
+     * @param camera_matrix Optional 3x3 row-major camera matrix H_{t -> 0}.
+     * @return Point2D in pitch meters, or std::nullopt if point is rejected or singularity occurs.
+     */
+    std::optional<Point2D> transform_point(
+        const Point2D& point,
+        OutOfBoundsPolicy policy,
+        const std::optional<std::array<double, 9>>& camera_matrix = std::nullopt
+    ) const noexcept;
+
+    /**
+     * @brief Backwards-compatible overload using boolean check_boundary.
+     *
+     * @param point Image coordinate (pixel x, y).
+     * @param check_boundary If true, uses OutOfBoundsPolicy::Strict; otherwise Extrapolate.
+     * @return Point2D in pitch meters, or std::nullopt if point is outside polygon.
      */
     std::optional<Point2D> transform_point(const Point2D& point, bool check_boundary = true) const noexcept;
 
     /**
-     * @brief Batch project multiple image coordinates.
+     * @brief Batch project multiple image coordinates with policy and camera matrix.
      */
-    std::vector<std::optional<Point2D>> transform_points(const std::vector<Point2D>& points) const;
+    std::vector<std::optional<Point2D>> transform_points(
+        const std::vector<Point2D>& points,
+        OutOfBoundsPolicy policy = OutOfBoundsPolicy::Strict,
+        const std::optional<std::array<double, 9>>& camera_matrix = std::nullopt
+    ) const;
+
+    /**
+     * @brief High-performance contiguous batch transformation for (N, 2) double buffers.
+     *
+     * @param points_in Pointer to contiguous (N, 2) row-major pixel coordinates [x, y].
+     * @param count Number of points N.
+     * @param points_out Pointer to preallocated (N, 2) output buffer for metric coordinates.
+     * @param policy Out of bounds policy.
+     * @param camera_matrix Optional 3x3 camera matrix.
+     * @param valid_mask Optional output buffer of size N (true if valid / inside boundary).
+     */
+    void transform_points_batch_raw(
+        const double* points_in,
+        size_t count,
+        double* points_out,
+        OutOfBoundsPolicy policy = OutOfBoundsPolicy::Extrapolate,
+        const std::optional<std::array<double, 9>>& camera_matrix = std::nullopt,
+        bool* valid_mask = nullptr
+    ) const noexcept;
 
     /**
      * @brief Check if a point lies within or on the calibrated boundary polygon.
