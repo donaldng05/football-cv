@@ -68,6 +68,9 @@ class MatchPipeline:
             frame_rate=config.video.frame_rate,
             minimum_displacement=config.movement.minimum_displacement,
             method=config.movement.method,
+            max_speed_kmh=getattr(config.movement, "max_speed_kmh", 38.0),
+            enable_smoothing=getattr(config.movement, "enable_smoothing", True),
+            min_speed_mps=getattr(config.movement, "min_speed_mps", 0.5),
         )
         self.team_classifier = TeamClassifier(
             color_space=config.team_classification.color_space,
@@ -241,6 +244,7 @@ class MatchPipeline:
                 events = self.event_builder.build_events(
                     intervals=intervals,
                     player_tracks=tracks["players"],
+                    ball_tracks=tracks.get("balls"),
                 )
 
         return {
@@ -282,19 +286,22 @@ class MatchPipeline:
 
             return annotated_frames
 
-    def _process_and_render_chunk(
+    def _process_chunk_analysis(
         self,
         chunk_frames: list[np.ndarray],
         is_last: bool,
         cam_estimator_holder: dict[str, Any],
         streaming_interpolator: StreamingBallInterpolator,
-        writer: IncrementalVideoWriter,
         all_tracks: dict[str, list[dict[int, Any]]],
         all_camera_movement: list[tuple[float, float]],
         team_ball_control: list[int],
-    ) -> None:
+    ) -> dict[str, Any]:
+        """
+        Analyze a chunk of frames (detection, tracking, homography, team assignment, ball possession)
+        without rendering, accumulating metadata into all_tracks.
+        """
         if not chunk_frames:
-            return
+            return {"players": [], "referees": [], "balls": []}
 
         # 1. Multi-object tracking for chunk
         with self._time_stage("detection_and_tracking"):
@@ -348,7 +355,11 @@ class MatchPipeline:
             for frame_num, player_tracks in enumerate(chunk_tracks["players"]):
                 for player_id, track in player_tracks.items():
                     team = self.team_classifier.get_player_team(
-                        chunk_frames[frame_num], track["bbox"], player_id
+                        chunk_frames[frame_num],
+                        track["bbox"],
+                        player_id,
+                        role=track.get("role", "player"),
+                        frame_players=player_tracks,
                     )
                     track["team"] = team
                     track["team_color"] = self.team_classifier.team_colors.get(
@@ -397,30 +408,57 @@ class MatchPipeline:
 
             team_ball_control.extend(chunk_control)
 
-        # 8. Render visual annotations on chunk and write immediately to disk
-        with self._time_stage("rendering"):
-            annotated_chunk = self.annotator.draw_annotations(
-                chunk_frames, chunk_tracks, np.array(chunk_control)
-            )
-            annotated_chunk = self.annotator.draw_camera_movement(
-                annotated_chunk, chunk_movement
-            )
-            annotated_chunk = self.annotator.draw_speed_and_distance(
-                annotated_chunk, chunk_tracks
-            )
-            writer.write_chunk(annotated_chunk)
-
-        # 9. Retain only lightweight metadata
+        # Retain lightweight metadata
         all_tracks["players"].extend(chunk_tracks["players"])
         all_tracks["referees"].extend(chunk_tracks["referees"])
         all_tracks["balls"].extend(chunk_tracks["balls"])
         all_camera_movement.extend(chunk_movement)
+        return chunk_tracks
+
+    def _process_and_render_chunk(
+        self,
+        chunk_frames: list[np.ndarray],
+        is_last: bool,
+        cam_estimator_holder: dict[str, Any],
+        streaming_interpolator: StreamingBallInterpolator,
+        writer: IncrementalVideoWriter | None,
+        all_tracks: dict[str, list[dict[int, Any]]],
+        all_camera_movement: list[tuple[float, float]],
+        team_ball_control: list[int],
+    ) -> None:
+        """Backward-compatible helper that processes chunk analysis and optionally renders."""
+        start_count = len(all_tracks["players"])
+        chunk_tracks = self._process_chunk_analysis(
+            chunk_frames=chunk_frames,
+            is_last=is_last,
+            cam_estimator_holder=cam_estimator_holder,
+            streaming_interpolator=streaming_interpolator,
+            all_tracks=all_tracks,
+            all_camera_movement=all_camera_movement,
+            team_ball_control=team_ball_control,
+        )
+        if writer is not None:
+            end_count = len(all_tracks["players"])
+            chunk_movement = all_camera_movement[start_count:end_count]
+            chunk_control = np.array(team_ball_control[start_count:end_count])
+            with self._time_stage("rendering"):
+                annotated_chunk = self.annotator.draw_annotations(
+                    chunk_frames, chunk_tracks, chunk_control
+                )
+                annotated_chunk = self.annotator.draw_camera_movement(
+                    annotated_chunk, chunk_movement
+                )
+                annotated_chunk = self.annotator.draw_speed_and_distance(
+                    annotated_chunk, chunk_tracks
+                )
+                writer.write_chunk(annotated_chunk)
 
     def run_streaming(self, profile: bool = False) -> dict[str, Any]:
         """
         Execute memory-bounded sliding-window streaming pipeline.
         Peak memory consumption is strictly bounded to chunk_size frames (~400 MB),
-        enabling full match processing without OOM crashes.
+        enabling full match processing without OOM crashes while guaranteeing that
+        the rendered video matches the finalized sanitized analytics.
         """
         if profile and self.profiler is None:
             self.profiler = PipelineProfiler()
@@ -467,39 +505,65 @@ class MatchPipeline:
                 "events": [],
             }
 
+        # Pass 1: Chunked extraction and tracking (memory strictly bounded to chunk_size frames)
         cam_holder: dict[str, Any] = {"estimator": None}
-        with IncrementalVideoWriter(
-            output_path=out_path,
-            fps=self.config.video.frame_rate,
-        ) as writer:
-            for next_chunk_info in chunk_gen:
-                self._process_and_render_chunk(
-                    prev_chunk_info[1],
-                    is_last=False,
-                    cam_estimator_holder=cam_holder,
-                    streaming_interpolator=streaming_interpolator,
-                    writer=writer,
-                    all_tracks=all_tracks,
-                    all_camera_movement=all_camera_movement,
-                    team_ball_control=team_ball_control,
-                )
-                prev_chunk_info = next_chunk_info
-
-            self._process_and_render_chunk(
+        for next_chunk_info in chunk_gen:
+            self._process_chunk_analysis(
                 prev_chunk_info[1],
-                is_last=True,
+                is_last=False,
                 cam_estimator_holder=cam_holder,
                 streaming_interpolator=streaming_interpolator,
-                writer=writer,
                 all_tracks=all_tracks,
                 all_camera_movement=all_camera_movement,
                 team_ball_control=team_ball_control,
             )
+            prev_chunk_info = next_chunk_info
 
-        # Post-streaming global sanitization & analytics finalization
+        self._process_chunk_analysis(
+            prev_chunk_info[1],
+            is_last=True,
+            cam_estimator_holder=cam_holder,
+            streaming_interpolator=streaming_interpolator,
+            all_tracks=all_tracks,
+            all_camera_movement=all_camera_movement,
+            team_ball_control=team_ball_control,
+        )
+
+        # Global Track Sanitization & Kinematics before rendering!
         if self.config.tracking.enable_reid_sanitizer and all_tracks["players"]:
             TrackSanitizer.sanitize_team_consistency(all_tracks["players"])
             TrackSanitizer.stitch_fragmented_tracks(all_tracks["players"])
+
+        self.speed_distance_estimator.add_speed_and_distance_to_tracks(all_tracks)
+
+        # Pass 2: Chunked rendering to disk (memory strictly bounded to chunk_size)
+        with IncrementalVideoWriter(
+            output_path=out_path,
+            fps=self.config.video.frame_rate,
+        ) as writer:
+            render_gen = stream_video_chunks(
+                video_path,
+                chunk_size=chunk_size,
+                start_frame=start_frame,
+                end_frame=end_frame,
+            )
+            for start_idx, chunk_frames in render_gen:
+                end_idx = start_idx + len(chunk_frames)
+                chunk_tracks = {k: all_tracks[k][start_idx:end_idx] for k in all_tracks}
+                chunk_movement = all_camera_movement[start_idx:end_idx]
+                chunk_control = np.array(team_ball_control[start_idx:end_idx])
+
+                with self._time_stage("rendering"):
+                    annotated_chunk = self.annotator.draw_annotations(
+                        chunk_frames, chunk_tracks, chunk_control
+                    )
+                    annotated_chunk = self.annotator.draw_camera_movement(
+                        annotated_chunk, chunk_movement
+                    )
+                    annotated_chunk = self.annotator.draw_speed_and_distance(
+                        annotated_chunk, chunk_tracks
+                    )
+                    writer.write_chunk(annotated_chunk)
 
         intervals: list[PossessionInterval] = []
         events: list[CandidateEvent] = []
@@ -511,6 +575,7 @@ class MatchPipeline:
             events = self.event_builder.build_events(
                 intervals=intervals,
                 player_tracks=all_tracks["players"],
+                ball_tracks=all_tracks["balls"],
             )
 
         results = {
