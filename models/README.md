@@ -4,11 +4,16 @@ This directory contains fine-tuned YOLOv8 model checkpoints specialized for foot
 
 ---
 
+> [!NOTE]
+> Binary model checkpoints (`.pt`, `.onnx`) are stored externally to prevent repository bloat.
+> Run `python scripts/download_models.py` to download or verify local weights.
+
 ## 1. Checkpoint Inventory
 
 | File | Size (Bytes) | SHA-256 Checksum | Purpose |
 | :--- | :--- | :--- | :--- |
 | **`best.pt`** | 18,503,665 (~17.6 MB) | `4182f74567a6acade9b39cd4317db5c5b44fca63c09f1332323fb749090c5cc0` | Primary production checkpoint (best validation mAP) |
+| **`best.onnx`** | 36,703,762 (~35.0 MB) | - | Exported ONNX Runtime deployment model |
 | **`last.pt`** | 18,506,033 (~17.6 MB) | `0332e8a7833956a1a83a4791c061eb7f943bcdf246931e701389ec1bf9eaf9d4` | Final training epoch checkpoint |
 
 ---

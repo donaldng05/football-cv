@@ -1,8 +1,13 @@
 """
-Rigorous error analysis subsystem for computer vision football tracking pipelines.
+Synthetic diagnostic edge-case evaluation subsystem for computer vision football tracking.
 
-Provides failure taxonomy, diagnostic edge cases, before/after mitigation
-evaluators, and structured report exporters.
+Provides a reproducible failure taxonomy, synthetic edge-case scenarios, and before/after
+mitigation evaluators to stress-test pipeline defense heuristics against known CV failure modes
+(e.g., ball dropout, possession flicker, tracker ID swaps, camera scene cuts, velocity spikes).
+
+Note: This subsystem is a deterministic diagnostic regression suite designed to verify internal
+safeguards under controlled edge cases; it does not replace empirical benchmarking on real-world
+human-annotated match footage (e.g., SoccerNet).
 """
 
 import csv

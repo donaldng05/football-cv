@@ -47,6 +47,8 @@ class TestDetectorVectorization:
         """Verify live ONNX detector initialization when native C++ or onnxruntime is available."""
         if not has_cpp_core() and importlib.util.find_spec("onnxruntime") is None:
             pytest.skip("Neither native C++ _core nor onnxruntime is available")
+        if not Path("models/best.onnx").exists():
+            pytest.skip("Model checkpoint models/best.onnx not present on disk")
 
         detector = ObjectDetector(
             model_path="models/best.onnx",
