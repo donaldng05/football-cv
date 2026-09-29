@@ -53,6 +53,7 @@ class MatchPipeline:
             ball_max_displacement_pixels=config.tracking.ball_tracker_max_distance,
             ball_min_confidence=config.tracking.ball_min_confidence,
             enable_reid_sanitizer=config.tracking.enable_reid_sanitizer,
+            class_confidences=config.model.class_confidences,
         )
         self.view_transformer = get_perspective_transformer(
             pixel_vertices=config.perspective.pixel_vertices,
@@ -189,7 +190,11 @@ class MatchPipeline:
                 for frame_num, player_tracks in enumerate(tracks["players"]):
                     for player_id, track in player_tracks.items():
                         team = self.team_classifier.get_player_team(
-                            frames[frame_num], track["bbox"], player_id
+                            frames[frame_num],
+                            track["bbox"],
+                            player_id,
+                            role=track.get("role", "player"),
+                            frame_players=player_tracks,
                         )
                         tracks["players"][frame_num][player_id]["team"] = team
                         tracks["players"][frame_num][player_id]["team_color"] = (
