@@ -110,10 +110,8 @@ class CppPerspectiveTransformerAdapter:
         """
         Compute effective projective homography H_{t -> pitch} = H_{0 -> pitch} @ H_{t -> 0}.
         """
-        if camera_matrix is None:
-            return self.perspective_transformer
-        return (self.perspective_transformer @ camera_matrix.astype(np.float32)).astype(
-            np.float32
+        return np.asarray(
+            self.core.get_effective_homography(camera_matrix), dtype=np.float32
         )
 
     def transform_point(
@@ -128,43 +126,10 @@ class CppPerspectiveTransformerAdapter:
         Returns None if the point lies outside the calibrated pitch boundary polygon in strict mode.
         """
         policy = (out_of_bounds_policy or self.out_of_bounds_policy).lower()
-        if camera_matrix is not None:
-            import cv2
-
-            pt_x, pt_y = float(point[0]), float(point[1])
-            h_eff = self.get_effective_homography(camera_matrix)
-            w_prime = float(h_eff[2, 0] * pt_x + h_eff[2, 1] * pt_y + h_eff[2, 2])
-            if w_prime <= 1e-6:
-                return None
-            reshaped = np.array([[pt_x, pt_y]], dtype=np.float32).reshape(-1, 1, 2)
-            transformed = cv2.perspectiveTransform(reshaped, h_eff)
-            res = transformed.reshape(-1, 2)
-            is_inside = (
-                0.0 <= res[0, 0] <= self.court_width
-                and 0.0 <= res[0, 1] <= self.court_length
-            )
-            if not is_inside and policy == "strict":
-                return None
-            if not is_inside and policy == "clip":
-                res[0, 0] = float(np.clip(res[0, 0], 0.0, self.court_width))
-                res[0, 1] = float(np.clip(res[0, 1], 0.0, self.court_length))
-            return res
-
-        if policy == "strict":
-            pt = self.core.transform_point(point, True)
-            if pt is None:
-                return None
-            return np.array([[pt.x, pt.y]], dtype=np.float32)
-
-        # In non-strict mode (clip or extrapolate):
-        pt = self.core.transform_point(point, False)
+        pt = self.core.transform_point(point, policy, camera_matrix)
         if pt is None:
             return None
-        tx, ty = pt.x, pt.y
-        if policy == "clip":
-            tx = float(np.clip(tx, 0.0, self.court_width))
-            ty = float(np.clip(ty, 0.0, self.court_length))
-        return np.array([[tx, ty]], dtype=np.float32)
+        return np.array([[pt.x, pt.y]], dtype=np.float32)
 
     def transform_points_batch(
         self,
@@ -178,20 +143,11 @@ class CppPerspectiveTransformerAdapter:
         if points.size == 0:
             return np.zeros((0, 2), dtype=np.float32)
 
-        import cv2
-
-        pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
-        h_eff = self.get_effective_homography(camera_matrix)
-
-        reshaped = pts.reshape(-1, 1, 2)
-        transformed = cv2.perspectiveTransform(reshaped, h_eff).reshape(-1, 2)
-
         policy = (out_of_bounds_policy or self.out_of_bounds_policy).lower()
-        if policy == "clip":
-            transformed[:, 0] = np.clip(transformed[:, 0], 0.0, self.court_width)
-            transformed[:, 1] = np.clip(transformed[:, 1], 0.0, self.court_length)
-
-        return transformed
+        if out_of_bounds_policy is None and policy == "strict":
+            policy = "extrapolate"
+        pts = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+        return self.core.transform_points_batch(pts, camera_matrix, policy)
 
     def add_transformed_position_to_tracks(
         self,
