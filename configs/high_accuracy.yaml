@@ -35,6 +35,10 @@ possession:
 movement:
   speed_window_frames: 5
   minimum_displacement: 0.05
+  method: "rolling"
+  max_speed_kmh: 38.0
+  enable_smoothing: true
+  min_speed_mps: 0.5
 
 perspective:
   pixel_vertices:
