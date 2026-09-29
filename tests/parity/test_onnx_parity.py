@@ -30,6 +30,10 @@ pytestmark = [
         not has_cpp_core(),
         reason="Native C++ extension football_cv._core is required for ONNX parity testing",
     ),
+    pytest.mark.skipif(
+        not Path("models/best.onnx").exists() or not Path("models/best.pt").exists(),
+        reason="Model checkpoints models/best.onnx or models/best.pt not present on disk",
+    ),
 ]
 
 VIDEO_PATH = "input_videos/08fd33_4.mp4"

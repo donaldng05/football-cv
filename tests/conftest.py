@@ -51,6 +51,20 @@ def ensure_sample_match_video() -> Path:
     return video_path
 
 
+@pytest.fixture(scope="session", autouse=True)
+def ensure_model_weights() -> Path:
+    """
+    Ensure a model weights file exists at models/best.pt for testing.
+    Creates a non-empty mock checkpoint if absent in a clean checkout.
+    """
+    model_dir = Path("models")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    best_pt = model_dir / "best.pt"
+    if not best_pt.exists():
+        best_pt.write_bytes(b"PK\x03\x04mock_weights_for_testing")
+    return best_pt
+
+
 @pytest.fixture
 def synthetic_video_frames() -> list[np.ndarray]:
     """Generate a synthetic 5-frame 720p RGB video sequence."""

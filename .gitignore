@@ -41,7 +41,12 @@ htmlcov/
 /runs
 /stubs
 
-# Large weights & video directories
+# Large weights, model checkpoints & video directories
+*.pt
+*.onnx
+models/*.pt
+models/*.onnx
+!models/README.md
 yolov8x.pt
 /input_videos/
 /output_videos/*
