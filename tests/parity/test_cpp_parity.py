@@ -247,6 +247,10 @@ class TestPerspectiveParity:
     """Validate numerical parity for 4-point homography and metric pitch projection."""
 
     @pytest.fixture
+    def rng(self) -> np.random.RandomState:
+        return np.random.RandomState(42)
+
+    @pytest.fixture
     def custom_quadrilaterals(self) -> list[list[list[float]]]:
         """Set of diverse 4-point broadcast camera polygons."""
         return [
@@ -391,6 +395,158 @@ class TestPerspectiveParity:
                             pos_cpp,
                             atol=1e-4,
                             err_msg=f"Discrepancy in {obj_name} frame {frame_idx} track {track_id}",
+                        )
+
+    def test_effective_homography_parity(self, rng: np.random.RandomState):
+        """Effective compounded homographies must match within atol=1e-5."""
+        py_tf = get_perspective_transformer(backend="python")
+        cpp_tf = get_perspective_transformer(backend="cpp")
+
+        for _ in range(10):
+            # Generate random camera motion matrix H_{t -> 0}
+            dx = float(rng.uniform(-30.0, 30.0))
+            dy = float(rng.uniform(-20.0, 20.0))
+            scale = float(rng.uniform(0.98, 1.02))
+            cam = np.array(
+                [[scale, 0.0, dx], [0.0, scale, dy], [0.0, 0.0, 1.0]],
+                dtype=np.float32,
+            )
+
+            py_h = py_tf.get_effective_homography(cam)
+            cpp_h = cpp_tf.get_effective_homography(cam)
+
+            np.testing.assert_allclose(
+                py_h,
+                cpp_h,
+                atol=1e-5,
+                err_msg="Compounded effective homography mismatch",
+            )
+
+    def test_dynamic_camera_point_projection_parity(self, rng: np.random.RandomState):
+        """Point projection with camera matrices and policies must match within 1e-4 meters."""
+        py_tf = get_perspective_transformer(backend="python")
+        cpp_tf = get_perspective_transformer(backend="cpp")
+
+        cam = np.array(
+            [[1.0, 0.0, 15.0], [0.0, 1.0, -8.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+
+        test_points = [
+            [500.0, 500.0],
+            [200.0, 300.0],
+            [1200.0, 800.0],
+            [50.0, 50.0],  # near or out of boundary
+            [1800.0, 950.0],
+            [0.0, 0.0],
+        ]
+
+        for policy in ["strict", "clip", "extrapolate"]:
+            for pt in test_points:
+                pt_arr = np.array(pt, dtype=np.float32)
+                res_py = py_tf.transform_point(
+                    pt_arr, out_of_bounds_policy=policy, camera_matrix=cam
+                )
+                res_cpp = cpp_tf.transform_point(
+                    pt_arr, out_of_bounds_policy=policy, camera_matrix=cam
+                )
+
+                if res_py is None:
+                    assert res_cpp is None, (
+                        f"Policy {policy} for {pt}: Python was None but C++ was {res_cpp}"
+                    )
+                else:
+                    assert res_cpp is not None, (
+                        f"Policy {policy} for {pt}: Python was {res_py} but C++ was None"
+                    )
+                    np.testing.assert_allclose(
+                        res_py,
+                        res_cpp,
+                        atol=1e-4,
+                        err_msg=f"Discrepancy for point {pt} under policy {policy}",
+                    )
+
+    def test_batch_transformation_parity(self, rng: np.random.RandomState):
+        """Batch array transformation must match across all policies within 1e-4."""
+        py_tf = get_perspective_transformer(backend="python")
+        cpp_tf = get_perspective_transformer(backend="cpp")
+
+        cam = np.array(
+            [[1.01, 0.0, -12.0], [0.0, 1.01, 5.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+
+        pts = np.array(
+            [
+                [500.0, 500.0],
+                [600.0, 450.0],
+                [100.0, 100.0],
+                [1700.0, 900.0],
+                [0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+
+        for policy in ["clip", "extrapolate"]:
+            res_py = py_tf.transform_points_batch(
+                pts, camera_matrix=cam, out_of_bounds_policy=policy
+            )
+            res_cpp = cpp_tf.transform_points_batch(
+                pts, camera_matrix=cam, out_of_bounds_policy=policy
+            )
+
+            np.testing.assert_allclose(
+                res_py,
+                res_cpp,
+                atol=1e-4,
+                err_msg=f"Batch discrepancy under policy {policy}",
+            )
+
+    def test_add_transformed_position_to_tracks_with_camera_matrices_parity(
+        self, synthetic_track_sequence: dict[str, Any]
+    ):
+        """Track mutation parity when camera motion compensation matrices are provided."""
+        py_tf = get_perspective_transformer(backend="python")
+        cpp_tf = get_perspective_transformer(backend="cpp")
+
+        tracks_py = copy.deepcopy(synthetic_track_sequence)
+        tracks_cpp = copy.deepcopy(synthetic_track_sequence)
+
+        num_frames = len(tracks_py.get("players", []))
+        camera_matrices = []
+        for i in range(num_frames):
+            cam = np.eye(3, dtype=np.float32)
+            cam[0, 2] = float(i * 1.5)
+            cam[1, 2] = float(-i * 0.5)
+            camera_matrices.append(cam)
+
+        py_tf.add_transformed_position_to_tracks(
+            tracks_py, camera_matrices=camera_matrices
+        )
+        cpp_tf.add_transformed_position_to_tracks(
+            tracks_cpp, camera_matrices=camera_matrices
+        )
+
+        for obj_name in ["players", "referees", "ball"]:
+            if obj_name not in tracks_py:
+                continue
+            for frame_idx in range(len(tracks_py[obj_name])):
+                frame_py = tracks_py[obj_name][frame_idx]
+                frame_cpp = tracks_cpp[obj_name][frame_idx]
+
+                for track_id in frame_py:
+                    pos_py = frame_py[track_id].get("position_transformed")
+                    pos_cpp = frame_cpp[track_id].get("position_transformed")
+
+                    if pos_py is None:
+                        assert pos_cpp is None
+                    else:
+                        assert pos_cpp is not None
+                        np.testing.assert_allclose(
+                            pos_py,
+                            pos_cpp,
+                            atol=1e-4,
+                            err_msg=f"Discrepancy in {obj_name} frame {frame_idx} track {track_id} with camera matrix",
                         )
 
 
