@@ -319,10 +319,10 @@ PYBIND11_MODULE(_core, m) {
         .def("get_effective_homography", [](const PerspectiveTransformer& self, py::object camera_matrix) {
             auto cam = parse_camera_matrix(camera_matrix);
             auto h_eff = self.get_effective_homography(cam);
-            py::array_t<double> arr({3, 3});
+            py::array_t<double> arr(std::vector<py::ssize_t>{3, 3});
             auto r = arr.mutable_unchecked<2>();
-            for (ssize_t i = 0; i < 3; ++i) {
-                for (ssize_t j = 0; j < 3; ++j) {
+            for (py::ssize_t i = 0; i < 3; ++i) {
+                for (py::ssize_t j = 0; j < 3; ++j) {
                     r(i, j) = h_eff[i * 3 + j];
                 }
             }
@@ -370,7 +370,7 @@ PYBIND11_MODULE(_core, m) {
                                           py::object policy_or_check) -> py::array_t<float> {
             auto info = points.request();
             if (info.ndim == 0 || info.size == 0) {
-                return py::array_t<float>({0, 2});
+                return py::array_t<float>(std::vector<py::ssize_t>{0, 2});
             }
             if (info.ndim != 2 || info.shape[1] != 2) {
                 throw std::invalid_argument("Expected 2D array of shape (N, 2)");
@@ -379,7 +379,7 @@ PYBIND11_MODULE(_core, m) {
             OutOfBoundsPolicy policy = parse_policy(policy_or_check, OutOfBoundsPolicy::Extrapolate);
             auto cam = parse_camera_matrix(camera_matrix);
 
-            py::array_t<float> result({static_cast<ssize_t>(N), static_cast<ssize_t>(2)});
+            py::array_t<float> result(std::vector<py::ssize_t>{static_cast<py::ssize_t>(N), 2});
             float* out_ptr = static_cast<float*>(result.request().ptr);
             const double* in_ptr = static_cast<const double*>(info.ptr);
 
@@ -404,11 +404,11 @@ PYBIND11_MODULE(_core, m) {
         .def_property_readonly("court_length", &PerspectiveTransformer::court_length)
         .def_property_readonly("pixel_vertices", &PerspectiveTransformer::pixel_vertices)
         .def_property_readonly("homography_matrix", [](const PerspectiveTransformer& self) {
-            py::array_t<double> arr({3, 3});
+            py::array_t<double> arr(std::vector<py::ssize_t>{3, 3});
             auto r = arr.mutable_unchecked<2>();
             const auto& h = self.homography_matrix();
-            for (ssize_t i = 0; i < 3; ++i) {
-                for (ssize_t j = 0; j < 3; ++j) {
+            for (py::ssize_t i = 0; i < 3; ++i) {
+                for (py::ssize_t j = 0; j < 3; ++j) {
                     r(i, j) = h[i * 3 + j];
                 }
             }
