@@ -23,7 +23,7 @@ video:
   end_frame: null       # null processes all frames
 
 tracking:
-  use_cached_tracks: true
+  use_cached_tracks: false  # Set to true only to reuse cached stubs for sample video 08fd33_4.mp4
   cache_path: "stubs/track_stubs.pkl"
   camera_movement_cache_path: "stubs/camera_movement_stubs.pkl"
   track_activation_threshold: 0.25
