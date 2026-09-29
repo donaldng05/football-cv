@@ -48,6 +48,15 @@ public:
         int width,
         int height,
         float confidence_threshold = 0.10f,
+        float nms_threshold = 0.50f,
+        const std::vector<float>& class_thresholds = {}
+    ) override;
+
+    std::vector<Detection> detect(
+        const uint8_t* bgr_data,
+        int width,
+        int height,
+        const std::vector<float>& class_thresholds,
         float nms_threshold = 0.50f
     ) override;
 
@@ -59,6 +68,15 @@ public:
         int width,
         int height,
         float confidence_threshold = 0.10f,
+        float nms_threshold = 0.50f,
+        const std::vector<float>& class_thresholds = {}
+    ) override;
+
+    std::vector<std::vector<Detection>> detect_batch(
+        const std::vector<const uint8_t*>& frames_data,
+        int width,
+        int height,
+        const std::vector<float>& class_thresholds,
         float nms_threshold = 0.50f
     ) override;
 
@@ -136,7 +154,8 @@ private:
         int orig_w,
         int orig_h,
         float confidence_threshold,
-        float nms_threshold
+        float nms_threshold,
+        const std::vector<float>& class_thresholds = {}
     );
 };
 

@@ -83,3 +83,52 @@ TEST_F(OnnxDetectorTest, SyntheticInferenceExecution) {
         EXPECT_LE(det.bbox.y2, 1080.0);
     }
 }
+
+TEST_F(OnnxDetectorTest, ClassSpecificThresholdsFiltering) {
+    if (model_path.empty()) {
+        GTEST_SKIP() << "models/best.onnx not found, skipping test.";
+    }
+
+    OnnxDetector detector(model_path, 2);
+    std::vector<uint8_t> frame(1920 * 1080 * 3, 114);
+
+    // Class thresholds: Ball (0)=0.10f, Goalkeeper (1)=0.30f, Player (2)=0.30f, Referee (3)=0.30f
+    std::vector<float> class_thresh = {0.10f, 0.30f, 0.30f, 0.30f};
+    auto detections = detector.detect(frame.data(), 1920, 1080, 0.20f, 0.45f, class_thresh);
+
+    for (const auto& det : detections) {
+        ASSERT_GE(det.class_id, 0);
+        ASSERT_LT(det.class_id, static_cast<int>(class_thresh.size()));
+        EXPECT_GE(det.confidence, class_thresh[det.class_id]);
+    }
+
+    // Suppress all classes except ball
+    std::vector<float> suppress_others = {0.05f, 1.0f, 1.0f, 1.0f};
+    auto detections_ball_only = detector.detect(frame.data(), 1920, 1080, 0.20f, 0.45f, suppress_others);
+    for (const auto& det : detections_ball_only) {
+        EXPECT_EQ(det.class_id, 0);
+        EXPECT_GE(det.confidence, 0.05f);
+    }
+}
+
+TEST_F(OnnxDetectorTest, DetectBatchWithClassThresholds) {
+    if (model_path.empty()) {
+        GTEST_SKIP() << "models/best.onnx not found, skipping test.";
+    }
+
+    OnnxDetector detector(model_path, 2);
+    std::vector<uint8_t> frame(640 * 640 * 3, 114);
+    std::vector<const uint8_t*> frames = {frame.data(), frame.data()};
+
+    std::vector<float> class_thresh = {0.12f, 0.25f, 0.25f, 0.25f};
+    auto batch_results = detector.detect_batch(frames, 640, 640, 0.20f, 0.45f, class_thresh);
+
+    ASSERT_EQ(batch_results.size(), 2);
+    for (const auto& detections : batch_results) {
+        for (const auto& det : detections) {
+            ASSERT_GE(det.class_id, 0);
+            ASSERT_LT(det.class_id, static_cast<int>(class_thresh.size()));
+            EXPECT_GE(det.confidence, class_thresh[det.class_id]);
+        }
+    }
+}

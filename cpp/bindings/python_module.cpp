@@ -14,6 +14,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace py = pybind11;
@@ -153,6 +154,70 @@ std::optional<std::array<double, 9>> parse_camera_matrix(const py::object& obj) 
         }
     }
     throw std::invalid_argument("Expected None, 3x3 array, or 9-element sequence for camera_matrix");
+}
+
+/**
+ * @brief Parse confidence threshold or class-specific thresholds dict/sequence for ONNX detector.
+ */
+inline std::pair<float, std::vector<float>> parse_confidence_and_class_thresholds(
+    py::object conf_obj,
+    py::object class_thresh_obj,
+    int num_classes,
+    float default_threshold = 0.10f
+) {
+    float base_threshold = default_threshold;
+    if (!conf_obj.is_none()) {
+        if (py::isinstance<py::float_>(conf_obj) || py::isinstance<py::int_>(conf_obj)) {
+            base_threshold = conf_obj.cast<float>();
+        } else if (class_thresh_obj.is_none()) {
+            class_thresh_obj = conf_obj;
+        }
+    }
+
+    if (class_thresh_obj.is_none()) {
+        return {base_threshold, {}};
+    }
+
+    if (py::isinstance<py::float_>(class_thresh_obj) || py::isinstance<py::int_>(class_thresh_obj)) {
+        return {class_thresh_obj.cast<float>(), {}};
+    }
+
+    static const std::unordered_map<std::string, int> default_name_to_id = {
+        {"ball", 0}, {"goalkeeper", 1}, {"player", 2}, {"referee", 3}
+    };
+
+    if (py::isinstance<py::dict>(class_thresh_obj)) {
+        auto dict = class_thresh_obj.cast<py::dict>();
+        std::vector<float> thresholds(num_classes, base_threshold);
+        for (auto item : dict) {
+            float val = item.second.cast<float>();
+            if (py::isinstance<py::str>(item.first)) {
+                std::string key = item.first.cast<std::string>();
+                auto it = default_name_to_id.find(key);
+                if (it != default_name_to_id.end() && it->second < num_classes) {
+                    thresholds[it->second] = val;
+                }
+            } else if (py::isinstance<py::int_>(item.first)) {
+                int cls_id = item.first.cast<int>();
+                if (cls_id >= 0 && cls_id < num_classes) {
+                    thresholds[cls_id] = val;
+                }
+            }
+        }
+        return {base_threshold, thresholds};
+    }
+
+    if (py::isinstance<py::sequence>(class_thresh_obj)) {
+        auto seq = class_thresh_obj.cast<py::sequence>();
+        std::vector<float> thresholds;
+        thresholds.reserve(seq.size());
+        for (auto item : seq) {
+            thresholds.push_back(item.cast<float>());
+        }
+        return {base_threshold, thresholds};
+    }
+
+    throw std::invalid_argument("Expected float, sequence, or dict for confidence / class_thresholds");
 }
 
 } // anonymous namespace
@@ -482,8 +547,9 @@ PYBIND11_MODULE(_core, m) {
              py::arg("num_threads") = 0)
         .def("detect", [](OnnxDetector& self,
                           py::array_t<uint8_t, py::array::c_style | py::array::forcecast> image,
-                          float confidence_threshold,
-                          float nms_threshold) {
+                          py::object confidence_threshold,
+                          float nms_threshold,
+                          py::object class_thresholds) {
             auto info = image.request();
             if (info.ndim != 3 || info.shape[2] != 3) {
                 throw std::invalid_argument("Expected 3D BGR image array with shape (H, W, 3)");
@@ -492,14 +558,22 @@ PYBIND11_MODULE(_core, m) {
             int width = static_cast<int>(info.shape[1]);
             const uint8_t* ptr = static_cast<const uint8_t*>(info.ptr);
 
+            auto [conf_thresh, cls_thresholds] = parse_confidence_and_class_thresholds(
+                confidence_threshold, class_thresholds, self.num_classes(), 0.10f
+            );
+
             py::gil_scoped_release release;
-            return self.detect(ptr, width, height, confidence_threshold, nms_threshold);
-        }, py::arg("frame"), py::arg("confidence_threshold") = 0.10f, py::arg("nms_threshold") = 0.50f,
+            return self.detect(ptr, width, height, conf_thresh, nms_threshold, cls_thresholds);
+        }, py::arg("frame"),
+           py::arg("confidence_threshold") = py::none(),
+           py::arg("nms_threshold") = 0.50f,
+           py::arg("class_thresholds") = py::none(),
            "Run object detection on a BGR NumPy array (H, W, 3).")
         .def("detect_batch", [](OnnxDetector& self,
                                 py::sequence frames,
-                                float confidence_threshold,
-                                float nms_threshold) {
+                                py::object confidence_threshold,
+                                float nms_threshold,
+                                py::object class_thresholds) {
             std::vector<py::array_t<uint8_t, py::array::c_style | py::array::forcecast>> arrays;
             std::vector<const uint8_t*> ptrs;
             arrays.reserve(frames.size());
@@ -527,9 +601,16 @@ PYBIND11_MODULE(_core, m) {
                 ptrs.push_back(static_cast<const uint8_t*>(info.ptr));
             }
 
+            auto [conf_thresh, cls_thresholds] = parse_confidence_and_class_thresholds(
+                confidence_threshold, class_thresholds, self.num_classes(), 0.10f
+            );
+
             py::gil_scoped_release release;
-            return self.detect_batch(ptrs, width, height, confidence_threshold, nms_threshold);
-        }, py::arg("frames"), py::arg("confidence_threshold") = 0.10f, py::arg("nms_threshold") = 0.50f,
+            return self.detect_batch(ptrs, width, height, conf_thresh, nms_threshold, cls_thresholds);
+        }, py::arg("frames"),
+           py::arg("confidence_threshold") = py::none(),
+           py::arg("nms_threshold") = 0.50f,
+           py::arg("class_thresholds") = py::none(),
            "Run object detection on a batch of BGR NumPy arrays.")
         .def_property_readonly("input_width", &OnnxDetector::input_width)
         .def_property_readonly("input_height", &OnnxDetector::input_height)
