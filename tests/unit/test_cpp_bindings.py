@@ -3,6 +3,7 @@ Unit tests for C++ native extension (football_cv._core) and pybind11 bindings.
 """
 
 import math
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -553,3 +554,105 @@ class TestBackendFacadeIntegration:
         assert len(movement) == 2
         assert movement[0] == (0.0, 0.0)
         assert movement[1] == (0.0, 0.0)
+
+
+class TestOnnxDetectorBindings:
+    """Test suite for native OnnxDetector pybind11 bindings."""
+
+    @pytest.fixture(autouse=True)
+    def check_model(self):
+        if not Path("models/best.onnx").exists():
+            pytest.skip("models/best.onnx not found")
+
+    def test_onnx_detector_initialization(self):
+        detector = native_core.OnnxDetector("models/best.onnx", 2)
+        assert detector.input_width == 640
+        assert detector.input_height == 640
+        assert detector.num_classes == 4
+        assert "models/best.onnx" in detector.model_path.replace("\\", "/")
+
+    def test_detect_scalar_confidence(self):
+        detector = native_core.OnnxDetector("models/best.onnx", 2)
+        frame = np.full((720, 1280, 3), 114, dtype=np.uint8)
+        dets = detector.detect(frame, confidence_threshold=0.25, nms_threshold=0.50)
+        assert isinstance(dets, list)
+        for d in dets:
+            assert isinstance(d, native_core.Detection)
+            assert d.confidence >= 0.25
+            assert 0 <= d.class_id < 4
+            assert d.bbox.is_valid()
+
+    def test_detect_dict_class_thresholds(self):
+        detector = native_core.OnnxDetector("models/best.onnx", 2)
+        frame = np.full((720, 1280, 3), 114, dtype=np.uint8)
+        thresholds = {
+            "ball": 0.12,
+            "player": 0.30,
+            "goalkeeper": 0.30,
+            "referee": 0.30,
+        }
+        dets = detector.detect(
+            frame,
+            confidence_threshold=0.20,
+            nms_threshold=0.50,
+            class_thresholds=thresholds,
+        )
+        assert isinstance(dets, list)
+        for d in dets:
+            expected_min = thresholds.get(
+                ["ball", "goalkeeper", "player", "referee"][d.class_id], 0.20
+            )
+            assert d.confidence >= expected_min
+
+    def test_detect_sequence_class_thresholds(self):
+        detector = native_core.OnnxDetector("models/best.onnx", 2)
+        frame = np.full((720, 1280, 3), 114, dtype=np.uint8)
+        seq_thresholds = [0.12, 0.30, 0.30, 0.30]
+        dets = detector.detect(frame, 0.20, 0.50, seq_thresholds)
+        assert isinstance(dets, list)
+        for d in dets:
+            assert d.confidence >= seq_thresholds[d.class_id]
+
+    def test_detect_batch_dict_and_list_thresholds(self):
+        detector = native_core.OnnxDetector("models/best.onnx", 2)
+        frame1 = np.full((640, 640, 3), 114, dtype=np.uint8)
+        frame2 = np.full((640, 640, 3), 114, dtype=np.uint8)
+
+        # Batch with dict thresholds
+        thresholds = {
+            "ball": 0.10,
+            "player": 0.25,
+            "goalkeeper": 0.25,
+            "referee": 0.25,
+        }
+        batch_dets = detector.detect_batch([frame1, frame2], 0.25, 0.50, thresholds)
+        assert len(batch_dets) == 2
+        for dets in batch_dets:
+            assert isinstance(dets, list)
+
+        # Batch with list thresholds
+        batch_dets_list = detector.detect_batch(
+            [frame1, frame2], 0.25, 0.50, [0.10, 0.25, 0.25, 0.25]
+        )
+        assert len(batch_dets_list) == 2
+
+    def test_detect_invalid_inputs(self):
+        detector = native_core.OnnxDetector("models/best.onnx", 2)
+        with pytest.raises(ValueError):
+            detector.detect(np.zeros((10, 10), dtype=np.uint8))  # 2D instead of 3D
+        with pytest.raises(ValueError):
+            detector.detect(
+                np.zeros((10, 10, 4), dtype=np.uint8)
+            )  # 4 channels instead of 3
+        # Empty batch returns empty list gracefully
+        assert detector.detect_batch([]) == []
+        # Incompatible shapes in batch raise ValueError
+        with pytest.raises(ValueError):
+            detector.detect_batch([np.zeros((10, 10), dtype=np.uint8)])
+        with pytest.raises(ValueError):
+            detector.detect_batch(
+                [
+                    np.zeros((10, 10, 3), dtype=np.uint8),
+                    np.zeros((20, 20, 3), dtype=np.uint8),
+                ]
+            )

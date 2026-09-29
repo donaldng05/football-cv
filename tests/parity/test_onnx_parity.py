@@ -280,3 +280,28 @@ class TestOnnxParity:
         assert "team_ball_control" in result
         assert len(result["tracks"]["players"]) == 3
         assert len(result["camera_movement"]) == 3
+
+    def test_class_specific_confidence_filtering(self) -> None:
+        """Verify that class-specific thresholds filter candidates accurately in ObjectDetector."""
+        detector = ObjectDetector(
+            model_path=ONNX_MODEL_PATH,
+            engine="onnx",
+            confidence=0.25,
+            class_confidences={
+                "ball": 0.12,
+                "goalkeeper": 0.30,
+                "player": 0.30,
+                "referee": 0.30,
+            },
+        )
+        assert detector.native_detector is not None
+
+        frame = np.full((720, 1280, 3), 114, dtype=np.uint8)
+        results = detector.detect_frames([frame])[0]
+
+        assert isinstance(results, sv.Detections)
+        for conf, cls_id in zip(results.confidence, results.class_id, strict=False):
+            if cls_id == 0:  # ball
+                assert conf >= 0.12
+            else:
+                assert conf >= 0.30
