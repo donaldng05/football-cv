@@ -10,6 +10,7 @@ Asserts exact mathematical equivalence and validates tolerances across:
 """
 
 import copy
+import math
 from pathlib import Path
 from typing import Any
 
@@ -677,6 +678,55 @@ class TestCameraMotionParity:
         assert accumulated[0] == native_core.Point2D(5.0, 1.0)
         assert accumulated[1] == native_core.Point2D(3.0, 4.0)
         assert accumulated[2] == native_core.Point2D(7.0, 2.0)
+
+    def test_affine_partial_ransac_numerical_parity(self):
+        """Native C++ Sim(2) RANSAC must match cv2.estimateAffinePartial2D within numerical tolerance."""
+        estimator = native_core.CameraMotionEstimator(5.0, 80.0)
+
+        # Ground truth: scale=1.02, angle=0.03 rad (~1.72 deg), tx=14.0, ty=-9.0
+        scale = 1.02
+        theta = 0.03
+        a = scale * math.cos(theta)
+        b = scale * math.sin(theta)
+        tx = 14.0
+        ty = -9.0
+
+        np.random.seed(42)
+        # 30 inlier points
+        from_pts = np.random.uniform(50.0, 800.0, size=(30, 1, 2)).astype(np.float32)
+        to_pts = np.zeros_like(from_pts)
+        for i in range(30):
+            x = float(from_pts[i, 0, 0])
+            y = float(from_pts[i, 0, 1])
+            to_pts[i, 0, 0] = a * x - b * y + tx
+            to_pts[i, 0, 1] = b * x + a * y + ty
+
+        # Add 5 outliers
+        outlier_from = np.random.uniform(50.0, 800.0, size=(5, 1, 2)).astype(np.float32)
+        outlier_to = np.random.uniform(0.0, 1000.0, size=(5, 1, 2)).astype(np.float32)
+
+        all_from = np.vstack([from_pts, outlier_from])
+        all_to = np.vstack([to_pts, outlier_to])
+
+        # 1. OpenCV RANSAC
+        cv_mat, _cv_inliers = cv2.estimateAffinePartial2D(
+            all_from, all_to, method=cv2.RANSAC, ransacReprojThreshold=3.0
+        )
+        assert cv_mat is not None
+
+        # 2. Native C++ RANSAC
+        cpp_res = estimator.estimate_affine_partial_ransac(all_from, all_to, 3.0, 100)
+        assert cpp_res.success
+        assert cpp_res.inlier_count >= 28
+
+        # 3. Numerical parity comparison of 2x3 matrix
+        cpp_2x3 = cpp_res.matrix[:2, :]
+        np.testing.assert_allclose(
+            cpp_2x3,
+            cv_mat,
+            atol=0.05,
+            err_msg="Discrepancy between native C++ Affine RANSAC and cv2.estimateAffinePartial2D",
+        )
 
     def test_add_adjust_positions_to_tracks_parity(
         self, synthetic_track_sequence: dict[str, Any]

@@ -515,8 +515,44 @@ PYBIND11_MODULE(_core, m) {
         .def_static("accumulate_motion", &CameraMotionEstimator::accumulate_motion,
                     py::arg("motion_steps"),
                     "Accumulate cumulative camera displacement across a sequence of frames.")
+        .def("estimate_affine_partial_ransac", [](const CameraMotionEstimator& self,
+                                                 py::object from_features,
+                                                 py::object to_features,
+                                                 double reprojection_threshold,
+                                                 int max_iterations) {
+            std::vector<Point2D> from_pts = parse_points(from_features);
+            std::vector<Point2D> to_pts = parse_points(to_features);
+            py::gil_scoped_release release;
+            return self.estimate_affine_partial_ransac(from_pts, to_pts, reprojection_threshold, max_iterations);
+        }, py::arg("from_features"), py::arg("to_features"),
+           py::arg("reprojection_threshold") = 3.0,
+           py::arg("max_iterations") = 100,
+           "Estimate 3x3 Sim(2) affine transformation matrix using native RANSAC.")
         .def_property_readonly("minimum_distance", &CameraMotionEstimator::minimum_distance)
         .def_property_readonly("scene_cut_threshold", &CameraMotionEstimator::scene_cut_threshold);
+
+    // ------------------------------------------------------------------------
+    // AffineResult
+    // ------------------------------------------------------------------------
+    py::class_<AffineResult>(m, "AffineResult", "Result of 2D affine partial / similarity RANSAC estimation.")
+        .def_property_readonly("matrix", [](const AffineResult& r) {
+            py::array_t<float> arr(std::vector<py::ssize_t>{3, 3});
+            auto m_mut = arr.mutable_unchecked<2>();
+            for (py::ssize_t i = 0; i < 3; ++i) {
+                for (py::ssize_t j = 0; j < 3; ++j) {
+                    m_mut(i, j) = r.matrix[i * 3 + j];
+                }
+            }
+            return arr;
+        }, "3x3 row-major transformation matrix as NumPy array.")
+        .def_readonly("inlier_count", &AffineResult::inlier_count, "Number of consensus inliers.")
+        .def_readonly("success", &AffineResult::success, "True if consensus met minimum inlier threshold.")
+        .def("__repr__", [](const AffineResult& r) {
+            std::ostringstream oss;
+            oss << "AffineResult(success=" << (r.success ? "True" : "False")
+                << ", inlier_count=" << r.inlier_count << ")";
+            return oss.str();
+        });
 
     // ------------------------------------------------------------------------
     // Detection

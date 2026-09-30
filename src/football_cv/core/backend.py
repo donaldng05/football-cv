@@ -196,6 +196,7 @@ class CppCameraMotionEstimatorAdapter:
         margin_ratio_x: float = 0.05,
         margin_ratio_y: float = 0.10,
         use_dynamic_margins: bool = True,
+        use_native_ransac: bool = True,
     ):
         if native_core is None:
             raise RuntimeError("Native C++ vision core is not available")
@@ -209,6 +210,7 @@ class CppCameraMotionEstimatorAdapter:
         self.margin_ratio_x = margin_ratio_x
         self.margin_ratio_y = margin_ratio_y
         self.use_dynamic_margins = use_dynamic_margins
+        self.use_native_ransac = use_native_ransac
 
         self.lk_params = dict(
             winSize=(15, 15),
@@ -304,16 +306,29 @@ class CppCameraMotionEstimatorAdapter:
                 is_cut = motion.is_scene_cut
 
                 if not is_cut and len(good_new) >= 4 and len(good_old) >= 4:
-                    affine_mat, inliers = cv2.estimateAffinePartial2D(
-                        good_new, good_old, method=cv2.RANSAC, ransacReprojThreshold=3.0
-                    )
-                    if affine_mat is not None and (
-                        inliers is None or np.sum(inliers) >= 3
-                    ):
-                        h_step[:2, :] = affine_mat.astype(np.float32)
+                    if self.use_native_ransac:
+                        affine_res = self.core.estimate_affine_partial_ransac(
+                            good_new, good_old, 3.0, 100
+                        )
+                        if affine_res.success and affine_res.inlier_count >= 3:
+                            h_step = affine_res.matrix
+                        else:
+                            h_step[0, 2] = float(cam_dx)
+                            h_step[1, 2] = float(cam_dy)
                     else:
-                        h_step[0, 2] = float(cam_dx)
-                        h_step[1, 2] = float(cam_dy)
+                        affine_mat, inliers = cv2.estimateAffinePartial2D(
+                            good_new,
+                            good_old,
+                            method=cv2.RANSAC,
+                            ransacReprojThreshold=3.0,
+                        )
+                        if affine_mat is not None and (
+                            inliers is None or np.sum(inliers) >= 3
+                        ):
+                            h_step[:2, :] = affine_mat.astype(np.float32)
+                        else:
+                            h_step[0, 2] = float(cam_dx)
+                            h_step[1, 2] = float(cam_dy)
                 elif not is_cut:
                     h_step[0, 2] = float(cam_dx)
                     h_step[1, 2] = float(cam_dy)
@@ -603,6 +618,7 @@ def get_camera_motion_estimator(
     margin_ratio_y: float = 0.10,
     use_dynamic_margins: bool = True,
     backend: str = "python",
+    use_native_ransac: bool = True,
     *,
     strict: bool = False,
 ) -> Any:
@@ -617,6 +633,7 @@ def get_camera_motion_estimator(
         margin_ratio_y: Vertical margin ratio for feature tracking.
         use_dynamic_margins: Whether to scale margins dynamically with resolution.
         backend: "python" or "cpp".
+        use_native_ransac: Whether to use native C++ RANSAC when backend is "cpp".
         strict: Whether to error if requested backend is unavailable.
 
     Returns:
@@ -632,6 +649,7 @@ def get_camera_motion_estimator(
             margin_ratio_x=margin_ratio_x,
             margin_ratio_y=margin_ratio_y,
             use_dynamic_margins=use_dynamic_margins,
+            use_native_ransac=use_native_ransac,
         )
 
     from ..camera_motion.estimator import CameraMotionEstimator

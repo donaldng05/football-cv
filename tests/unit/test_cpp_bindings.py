@@ -515,6 +515,67 @@ class TestCameraMotionEstimatorBindings:
         assert acc[0] == native_core.Point2D(5.0, 2.0)
         assert acc[1] == native_core.Point2D(3.0, 5.0)
 
+    def test_estimate_affine_partial_ransac_points(self):
+        estimator = native_core.CameraMotionEstimator(5.0, 80.0)
+
+        # Scale 1.02, angle 0.05, translation (10, -5)
+        theta = 0.05
+        scale = 1.02
+        a = scale * math.cos(theta)
+        b = scale * math.sin(theta)
+        tx, ty = 10.0, -5.0
+
+        from_pts = [
+            native_core.Point2D(100.0, 100.0),
+            native_core.Point2D(200.0, 150.0),
+            native_core.Point2D(300.0, 250.0),
+            native_core.Point2D(400.0, 100.0),
+            native_core.Point2D(500.0, 300.0),
+            native_core.Point2D(600.0, 200.0),
+        ]
+        to_pts = [
+            native_core.Point2D(a * p.x - b * p.y + tx, b * p.x + a * p.y + ty)
+            for p in from_pts
+        ]
+
+        res = estimator.estimate_affine_partial_ransac(from_pts, to_pts, 3.0, 100)
+        assert isinstance(res, native_core.AffineResult)
+        assert res.success
+        assert res.inlier_count == len(from_pts)
+        assert res.matrix.shape == (3, 3)
+        assert np.isclose(res.matrix[0, 0], a, atol=1e-3)
+        assert np.isclose(res.matrix[0, 1], -b, atol=1e-3)
+        assert np.isclose(res.matrix[0, 2], tx, atol=1e-2)
+        assert np.isclose(res.matrix[1, 0], b, atol=1e-3)
+        assert np.isclose(res.matrix[1, 1], a, atol=1e-3)
+        assert np.isclose(res.matrix[1, 2], ty, atol=1e-2)
+        assert np.allclose(res.matrix[2, :], [0.0, 0.0, 1.0])
+
+    def test_estimate_affine_partial_ransac_numpy(self):
+        estimator = native_core.CameraMotionEstimator(5.0, 80.0)
+
+        # OpenCV format: shape (N, 1, 2)
+        from_arr = np.array(
+            [[[100.0, 100.0]], [[200.0, 150.0]], [[300.0, 250.0]], [[400.0, 200.0]]],
+            dtype=np.float32,
+        )
+        # Apply translation (15, -7)
+        to_arr = from_arr + np.array([[[15.0, -7.0]]], dtype=np.float32)
+
+        res = estimator.estimate_affine_partial_ransac(from_arr, to_arr, 3.0, 50)
+        assert res.success
+        assert res.inlier_count == 4
+        assert np.isclose(res.matrix[0, 2], 15.0, atol=1e-2)
+        assert np.isclose(res.matrix[1, 2], -7.0, atol=1e-2)
+
+    def test_estimate_affine_partial_ransac_degenerate(self):
+        estimator = native_core.CameraMotionEstimator(5.0, 80.0)
+        # Empty array
+        res_empty = estimator.estimate_affine_partial_ransac([], [])
+        assert not res_empty.success
+        assert res_empty.inlier_count == 0
+        assert np.allclose(res_empty.matrix, np.eye(3))
+
 
 class TestBackendFacadeIntegration:
     """Test suite verifying factory integration with C++ backend."""
@@ -554,6 +615,21 @@ class TestBackendFacadeIntegration:
         assert len(movement) == 2
         assert movement[0] == (0.0, 0.0)
         assert movement[1] == (0.0, 0.0)
+        assert len(estimator.camera_matrices) == 2
+
+    def test_camera_motion_estimator_cpp_adapter_native_ransac(self):
+        dummy_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        # Test explicit use_native_ransac True and False
+        for use_native in [True, False]:
+            estimator = get_camera_motion_estimator(
+                dummy_frame, backend="cpp", use_native_ransac=use_native
+            )
+            assert estimator.use_native_ransac is use_native
+            frames = [dummy_frame, dummy_frame]
+            movement = estimator.get_camera_movement(frames)
+            assert len(movement) == 2
+            assert len(estimator.camera_matrices) == 2
+            assert estimator.camera_matrices[0].shape == (3, 3)
 
 
 class TestOnnxDetectorBindings:
