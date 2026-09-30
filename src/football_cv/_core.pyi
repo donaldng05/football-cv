@@ -3,6 +3,7 @@ Type stubs for football_cv._core native C++ extension.
 """
 
 from collections.abc import Sequence
+from enum import Enum
 from typing import overload
 
 import numpy as np
@@ -57,6 +58,18 @@ class CameraMotion:
     def __eq__(self, other: object) -> bool: ...
     def __repr__(self) -> str: ...
 
+class AffineResult:
+    matrix: np.ndarray
+    inlier_count: int
+    success: bool
+
+    def __repr__(self) -> str: ...
+
+class OutOfBoundsPolicy(Enum):
+    Strict = ...
+    Clip = ...
+    Extrapolate = ...
+
 def get_center_of_bbox(bbox: BoundingBox) -> Point2D: ...
 def get_foot_position(bbox: BoundingBox) -> Point2D: ...
 def get_bbox_width(bbox: BoundingBox) -> float: ...
@@ -79,15 +92,36 @@ class PerspectiveTransformer:
         court_width: float = 68.0,
         court_length: float = 23.32,
     ) -> None: ...
+    def get_effective_homography(
+        self, camera_matrix: Sequence[float] | np.ndarray | None = None
+    ) -> np.ndarray: ...
     @overload
     def transform_point(
-        self, point: Point2D | Sequence[float] | np.ndarray
+        self,
+        point: Point2D | Sequence[float] | np.ndarray,
+        policy: str | bool | OutOfBoundsPolicy = "strict",
+        camera_matrix: Sequence[float] | np.ndarray | None = None,
     ) -> Point2D | None: ...
     @overload
-    def transform_point(self, x: float, y: float) -> Point2D | None: ...
+    def transform_point(
+        self,
+        x: float,
+        y: float,
+        policy: str | bool | OutOfBoundsPolicy = "strict",
+        camera_matrix: Sequence[float] | np.ndarray | None = None,
+    ) -> Point2D | None: ...
     def transform_points(
-        self, points: Sequence[Point2D | Sequence[float]] | np.ndarray
+        self,
+        points: Sequence[Point2D | Sequence[float]] | np.ndarray,
+        policy: str | bool | OutOfBoundsPolicy = "strict",
+        camera_matrix: Sequence[float] | np.ndarray | None = None,
     ) -> list[Point2D | None]: ...
+    def transform_points_batch_raw(
+        self,
+        points_xy: np.ndarray,
+        policy: str | bool | OutOfBoundsPolicy = "strict",
+        camera_matrix: Sequence[float] | np.ndarray | None = None,
+    ) -> np.ndarray: ...
     def is_point_inside(
         self, point: Point2D | Sequence[float] | np.ndarray
     ) -> bool: ...
@@ -111,6 +145,13 @@ class CameraMotionEstimator:
         old_features: Sequence[Point2D] | np.ndarray,
         new_features: Sequence[Point2D] | np.ndarray,
     ) -> CameraMotion: ...
+    def estimate_affine_partial_ransac(
+        self,
+        from_features: Sequence[Point2D | Sequence[float]] | np.ndarray,
+        to_features: Sequence[Point2D | Sequence[float]] | np.ndarray,
+        reprojection_threshold: float = 3.0,
+        max_iterations: int = 100,
+    ) -> AffineResult: ...
     @staticmethod
     def filter_margin_points(
         points: Sequence[Point2D] | np.ndarray,
@@ -142,14 +183,16 @@ class OnnxDetector:
     def detect(
         self,
         frame: np.ndarray,
-        confidence_threshold: float = 0.10,
+        confidence_threshold: float | None = None,
         nms_threshold: float = 0.50,
+        class_thresholds: dict[str | int, float] | Sequence[float] | None = None,
     ) -> list[Detection]: ...
     def detect_batch(
         self,
         frames: Sequence[np.ndarray],
-        confidence_threshold: float = 0.10,
+        confidence_threshold: float | None = None,
         nms_threshold: float = 0.50,
+        class_thresholds: dict[str | int, float] | Sequence[float] | None = None,
     ) -> list[list[Detection]]: ...
     @property
     def input_width(self) -> int: ...
@@ -157,5 +200,7 @@ class OnnxDetector:
     def input_height(self) -> int: ...
     @property
     def num_classes(self) -> int: ...
+    @property
+    def is_dynamic_batch(self) -> bool: ...
     @property
     def model_path(self) -> str: ...
