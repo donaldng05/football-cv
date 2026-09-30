@@ -2,9 +2,21 @@
 
 #include "types.hpp"
 
+#include <array>
 #include <vector>
 
 namespace football_cv {
+
+/**
+ * @brief Represents the result of an affine / similarity 2D RANSAC estimation.
+ */
+struct AffineResult {
+    std::array<float, 9> matrix{1.0f, 0.0f, 0.0f,
+                                0.0f, 1.0f, 0.0f,
+                                0.0f, 0.0f, 1.0f}; ///< Row-major 3x3 Sim(2) transformation matrix
+    int inlier_count{0};                           ///< Number of consensus inliers
+    bool success{false};                           ///< True if consensus met minimum inlier threshold
+};
 
 /**
  * @brief Compensates for camera pan and tilt movements by tracking feature displacements
@@ -33,6 +45,25 @@ public:
     CameraMotion estimate_from_features(
         const std::vector<Point2D>& old_features,
         const std::vector<Point2D>& new_features
+    ) const noexcept;
+
+    /**
+     * @brief Estimate 2D Affine Partial (Sim(2) 4-DoF: scale, rotation, translation) matrix via RANSAC.
+     *
+     * Finds 3x3 transformation matrix mapping from_features to to_features:
+     *   to_pt ~ [a, -b, tx; b, a, ty; 0, 0, 1] * from_pt
+     *
+     * @param from_features Source feature coordinates (e.g. current frame).
+     * @param to_features Target feature coordinates (e.g. previous frame).
+     * @param reprojection_threshold Maximum Euclidean distance in pixels to qualify as inlier (default: 3.0).
+     * @param max_iterations Maximum RANSAC trials (default: 100).
+     * @return AffineResult with 3x3 row-major transformation matrix and consensus metrics.
+     */
+    AffineResult estimate_affine_partial_ransac(
+        const std::vector<Point2D>& from_features,
+        const std::vector<Point2D>& to_features,
+        double reprojection_threshold = 3.0,
+        int max_iterations = 100
     ) const noexcept;
 
     /**
