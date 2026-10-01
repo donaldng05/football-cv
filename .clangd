@@ -17,6 +17,13 @@ CompileFlags:
     - -ID:/football-cv/build/_deps/pybind11-src/include
     - -ID:/football-cv/build/_deps/googletest-src/googletest/include
     - -ID:/football-cv/build/_deps/googletest-src/googlemock/include
+    - -DFOOTBALL_CV_HAS_ONNX=1
+    - -Icpp/third_party/onnxruntime/onnxruntime-win-x64-1.20.1/include
+    - -ID:/football-cv/cpp/third_party/onnxruntime/onnxruntime-win-x64-1.20.1/include
+    - -Icpp/third_party/onnxruntime/onnxruntime-linux-x64-1.20.1/include
+    - -Icpp/third_party/onnxruntime/onnxruntime-osx-arm64-1.20.1/include
+    - -Icpp/build/_deps/onnxruntime_prebuilt-src/include
+    - -Ibuild/_deps/onnxruntime_prebuilt-src/include
     - -Wno-unknown-pragmas
     - -Wno-unused-variable
 

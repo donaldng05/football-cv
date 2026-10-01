@@ -89,7 +89,7 @@ OnnxDetector::OnnxDetector(const std::string& model_path, int num_threads)
         num_classes_ = static_cast<int>(out_shape[1] - 4);
     }
 
-    input_tensor_values_.resize(1 * 3 * input_height_ * input_width_);
+    input_tensor_values_.resize(static_cast<size_t>(3) * static_cast<size_t>(input_height_) * static_cast<size_t>(input_width_));
 }
 
 OnnxDetector::~OnnxDetector() = default;
@@ -106,7 +106,7 @@ void OnnxDetector::preprocess(
     float& pad_x,
     float& pad_y
 ) {
-    chw_tensor.resize(1 * 3 * input_height_ * input_width_);
+    chw_tensor.resize(static_cast<size_t>(3) * static_cast<size_t>(input_height_) * static_cast<size_t>(input_width_));
     preprocess_to_ptr(bgr_data, width, height, chw_tensor.data(), scale, pad_x, pad_y);
 }
 
@@ -135,9 +135,9 @@ void OnnxDetector::preprocess_to_ptr(
 
     // Fill with gray background (114 / 255.0f = 0.4470588f)
     constexpr float gray_val = 114.0f / 255.0f;
-    std::fill(chw_dst, chw_dst + (3 * input_width_ * input_height_), gray_val);
+    std::fill(chw_dst, chw_dst + (static_cast<size_t>(3) * static_cast<size_t>(input_width_) * static_cast<size_t>(input_height_)), gray_val);
 
-    const int plane_stride = input_width_ * input_height_;
+    const size_t plane_stride = static_cast<size_t>(input_width_) * static_cast<size_t>(input_height_);
     float* r_plane = chw_dst;
     float* g_plane = chw_dst + plane_stride;
     float* b_plane = chw_dst + plane_stride * 2;
@@ -214,7 +214,9 @@ std::vector<Detection> OnnxDetector::postprocess(
     candidates.reserve(128);
 
     const int classes = static_cast<int>(num_channels - 4);
-    const float inv_scale = 1.0f / scale;
+    const double inv_scale = 1.0 / static_cast<double>(scale);
+    const double pad_x_d = static_cast<double>(pad_x);
+    const double pad_y_d = static_cast<double>(pad_y);
 
     const bool has_class_thresholds = !class_thresholds.empty();
     const float min_global_threshold = has_class_thresholds
@@ -244,15 +246,15 @@ std::vector<Detection> OnnxDetector::postprocess(
             : confidence_threshold;
 
         if (max_score >= thresh) {
-            const float cx = output_data[0 * num_anchors + i];
-            const float cy = output_data[1 * num_anchors + i];
-            const float w = output_data[2 * num_anchors + i];
-            const float h = output_data[3 * num_anchors + i];
+            const double cx = static_cast<double>(output_data[0 * num_anchors + i]);
+            const double cy = static_cast<double>(output_data[1 * num_anchors + i]);
+            const double half_w = static_cast<double>(output_data[2 * num_anchors + i]) * 0.5;
+            const double half_h = static_cast<double>(output_data[3 * num_anchors + i]) * 0.5;
 
-            double x1 = (cx - w * 0.5f - pad_x) * inv_scale;
-            double y1 = (cy - h * 0.5f - pad_y) * inv_scale;
-            double x2 = (cx + w * 0.5f - pad_x) * inv_scale;
-            double y2 = (cy + h * 0.5f - pad_y) * inv_scale;
+            double x1 = (cx - half_w - pad_x_d) * inv_scale;
+            double y1 = (cy - half_h - pad_y_d) * inv_scale;
+            double x2 = (cx + half_w - pad_x_d) * inv_scale;
+            double y2 = (cy + half_h - pad_y_d) * inv_scale;
 
             // Clip coordinates to frame boundary
             x1 = std::max(0.0, std::min(static_cast<double>(orig_w), x1));
@@ -396,7 +398,7 @@ std::vector<std::vector<Detection>> OnnxDetector::detect_batch(
     }
 
     // Allocate / resize contiguous batch input buffer
-    const size_t frame_tensor_size = 3 * input_height_ * input_width_;
+    const size_t frame_tensor_size = static_cast<size_t>(3) * static_cast<size_t>(input_height_) * static_cast<size_t>(input_width_);
     batch_tensor_values_.resize(batch_size * frame_tensor_size);
 
     std::vector<float> scales(batch_size);
